@@ -100,10 +100,6 @@ npm run dev
 docker compose up
 ```
 
-## Security note
-
-Never commit `.env` or paste real API keys into chat, commits, or issues. `.env` is gitignored; `.env.example` is the committed template. If a key is ever exposed, regenerate it immediately on the provider's dashboard.
-
 ## Why this exists
 
 Bloomberg Terminal costs $24,000/year and combines fundamental data with analytics in a single interface. No open tool does the same for DCF valuation, quant signal analysis, and algorithmic backtesting together. Cardinal aims to close that gap, with a closeable AI sidebar (four agents — Xavi, Iniesta, Busquets, Messi — named after the Barça midfield) that interprets each lens using only Cardinal's own computed data, with strict read-only guardrails, powered by Gemini 2.5 Flash.

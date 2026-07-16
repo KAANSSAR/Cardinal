@@ -55,6 +55,7 @@ def _mock_response(json_data, status_code=200):
 def fmp_key_configured(monkeypatch):
     """Ensure every test in this file runs as if FMP_API_KEY is set, unless overridden."""
     monkeypatch.setattr("cardinal.data.fmp_client.settings.fmp_api_key", "fake_test_key")
+    monkeypatch.setattr("cardinal.data.fmp_client.settings.fmp_configured", True)
 
 
 class TestNotConfigured:

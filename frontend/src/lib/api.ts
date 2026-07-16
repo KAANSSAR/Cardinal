@@ -15,13 +15,19 @@ async function apiGet<T>(path: string, params?: Record<string, string | number>)
       url.searchParams.set(key, String(value));
     }
   }
-
   const response = await fetch(url.toString());
   if (!response.ok) {
     const body = await response.json().catch(() => ({ detail: response.statusText }));
     throw new ApiError(body.detail ?? "Request failed", response.status);
   }
   return response.json() as Promise<T>;
+}
+
+export interface DCFAssumptions {
+  growth_rate: number;
+  terminal_growth_rate: number;
+  projection_years: number;
+  wacc_override?: number;
 }
 
 export interface DCFResponse {
@@ -40,21 +46,53 @@ export interface DCFResponse {
   premium_discount_pct: number;
 }
 
-export interface DCFAssumptions {
-  growth_rate: number;
-  terminal_growth_rate: number;
-  projection_years: number;
-  wacc_override?: number;
+export interface PeerMetrics {
+  ticker: string;
+  name: string;
+  market_cap: number | null;
+  enterprise_value: number | null;
+  ev_ebitda: number | null;
+  pe_ratio: number | null;
+  ev_revenue: number | null;
+  ps_ratio: number | null;
+}
+
+export interface CompsResponse {
+  ticker: string;
+  peers: PeerMetrics[];
+  median_ev_ebitda: number | null;
+  median_pe: number | null;
+  median_ev_revenue: number | null;
+  median_ps: number | null;
+  implied_ev_from_ebitda: number | null;
+  implied_ev_from_revenue: number | null;
 }
 
 export function fetchDCF(ticker: string, assumptions: Partial<DCFAssumptions> = {}) {
   const params: Record<string, string | number> = {};
   if (assumptions.growth_rate !== undefined) params.growth_rate = assumptions.growth_rate;
-  if (assumptions.terminal_growth_rate !== undefined)
-    params.terminal_growth_rate = assumptions.terminal_growth_rate;
-  if (assumptions.projection_years !== undefined)
-    params.projection_years = assumptions.projection_years;
+  if (assumptions.terminal_growth_rate !== undefined) params.terminal_growth_rate = assumptions.terminal_growth_rate;
+  if (assumptions.projection_years !== undefined) params.projection_years = assumptions.projection_years;
   if (assumptions.wacc_override !== undefined) params.wacc_override = assumptions.wacc_override;
-
   return apiGet<DCFResponse>(`/ticker/${ticker}/dcf`, params);
+}
+
+export function fetchComps(ticker: string) {
+  return apiGet<CompsResponse>(`/ticker/${ticker}/comps`);
+}
+
+export interface SearchResult {
+  symbol: string;
+  name: string;
+  exchange: string | null;
+  type: string | null;
+}
+
+export interface SearchResponse {
+  query: string;
+  results: SearchResult[];
+}
+
+export function searchTickers(query: string) {
+  return apiGet<SearchResponse>("/search", { q: query });
 }

@@ -115,6 +115,41 @@ def get_cash_flow_statement(ticker: str, *, period: str = "annual", limit: int =
     return data  # type: ignore[return-value]
 
 
+def get_stock_peers(ticker: str) -> list[str]:
+    """
+    Returns a list of peer ticker symbols for the given company.
+    FMP's stable/stock-peers endpoint returns a flat list of peer objects,
+    each with symbol, companyName, price, mktCap.
+    """
+    api_key = _require_api_key()
+    url = f"{settings.fmp_base_url}/stock-peers"
+    try:
+        response = httpx.get(url, params={"symbol": ticker, "apikey": api_key}, timeout=10.0)
+    except httpx.RequestError as e:
+        raise FMPRequestError(f"Network error fetching peers for '{ticker}': {e}") from e
+
+    if response.status_code != 200:
+        raise FMPRequestError(f"FMP returned status {response.status_code} for stock-peers/{ticker}")
+
+    data = response.json()
+    if not data or not isinstance(data, list):
+        return []
+
+    # Each item is {"symbol": "MSFT", "companyName": "...", "price": ..., "mktCap": ...}
+    return [item["symbol"] for item in data if isinstance(item, dict) and "symbol" in item]
+
+
+def get_key_metrics_ttm(ticker: str) -> dict:
+    """
+    TTM key metrics — includes EV/EBITDA, P/E, P/S, EV/Revenue, market cap.
+    Used for the comparable companies table.
+    """
+    data = _get("key-metrics-ttm", ticker)
+    if not data:
+        raise TickerNotFoundError(f"No FMP TTM key metrics found for ticker '{ticker}'")
+    return data[0] if isinstance(data, list) else data
+
+
 def fetch_company_profile(ticker: str) -> CompanyProfile:
     """FMP equivalent of market_data.fetch_company_profile — same return shape philosophy."""
     profile = get_profile(ticker)

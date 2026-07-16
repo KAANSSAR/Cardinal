@@ -60,6 +60,7 @@ def fmp_key_configured(monkeypatch):
 class TestNotConfigured:
     def test_raises_when_no_api_key(self, monkeypatch):
         monkeypatch.setattr("cardinal.data.fmp_client.settings.fmp_api_key", None)
+        monkeypatch.setattr("cardinal.data.fmp_client.settings.fmp_configured", False)
         with pytest.raises(FMPNotConfiguredError):
             get_profile("AAPL")
 

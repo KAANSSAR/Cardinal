@@ -1,120 +1,126 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { ApiError, fetchDCF, type DCFResponse } from "../lib/api";
+import { ApiError, fetchComps, fetchDCF, type CompsResponse, type DCFAssumptions, type DCFResponse } from "../lib/api";
+import { useDebounce } from "../lib/useDebounce";
+import AssumptionsPanel from "../components/AssumptionsPanel";
+import DCFOutputCard from "../components/DCFOutputCard";
+import CompsTable from "../components/CompsTable";
 
-const TABS = [
-  { key: "fundamental", label: "Fundamental", color: "border-teal text-teal", active: true },
-  { key: "quant", label: "Quant", color: "border-blue text-blue", active: false },
-  { key: "backtest", label: "Backtest", color: "border-purple text-purple", active: false },
+const DEFAULT_ASSUMPTIONS: DCFAssumptions = {
+  growth_rate: 0.08,
+  terminal_growth_rate: 0.035,
+  projection_years: 5,
+  wacc_override: undefined,
+};
+
+type Tab = "fundamental" | "quant" | "backtest";
+
+const TABS: { key: Tab; label: string; colorClass: string; available: boolean }[] = [
+  { key: "fundamental", label: "Fundamental", colorClass: "border-teal text-teal", available: true },
+  { key: "quant", label: "Quant", colorClass: "border-blue text-blue", available: false },
+  { key: "backtest", label: "Backtest", colorClass: "border-purple text-purple", available: false },
 ];
-
-function formatCurrency(value: number): string {
-  if (Math.abs(value) >= 1e9) return `$${(value / 1e9).toFixed(1)}B`;
-  if (Math.abs(value) >= 1e6) return `$${(value / 1e6).toFixed(1)}M`;
-  return `$${value.toFixed(2)}`;
-}
-
-function formatPct(value: number): string {
-  return `${(value * 100).toFixed(2)}%`;
-}
 
 export default function TickerPage() {
   const { symbol } = useParams<{ symbol: string }>();
-  const [data, setData] = useState<DCFResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<Tab>("fundamental");
+  const [assumptions, setAssumptions] = useState<DCFAssumptions>(DEFAULT_ASSUMPTIONS);
+  const debouncedAssumptions = useDebounce(assumptions, 400);
+
+  const [dcfData, setDcfData] = useState<DCFResponse | null>(null);
+  const [dcfLoading, setDcfLoading] = useState(true);
+  const [dcfError, setDcfError] = useState<string | null>(null);
+
+  const [compsData, setCompsData] = useState<CompsResponse | null>(null);
+  const [compsLoading, setCompsLoading] = useState(true);
 
   useEffect(() => {
     if (!symbol) return;
-    setLoading(true);
-    setError(null);
-    fetchDCF(symbol)
-      .then(setData)
-      .catch((err: unknown) => {
-        if (err instanceof ApiError) setError(err.message);
-        else setError("Something went wrong fetching this ticker.");
-      })
-      .finally(() => setLoading(false));
+    setDcfLoading(true);
+    setDcfError(null);
+    const params = { ...debouncedAssumptions };
+    if (params.wacc_override === undefined) delete params.wacc_override;
+    fetchDCF(symbol, params)
+      .then(setDcfData)
+      .catch((err: unknown) => setDcfError(err instanceof ApiError ? err.message : "Failed to fetch DCF data."))
+      .finally(() => setDcfLoading(false));
+  }, [symbol, debouncedAssumptions]);
+
+  useEffect(() => {
+    if (!symbol) return;
+    setCompsLoading(true);
+    fetchComps(symbol)
+      .then(setCompsData)
+      .catch(() => setCompsData(null))
+      .finally(() => setCompsLoading(false));
   }, [symbol]);
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-10">
-      <div className="flex items-baseline justify-between mb-6">
+    <div className="mx-auto max-w-5xl px-6 py-10">
+      <div className="flex items-start justify-between mb-6 gap-4">
         <div>
           <h1 className="font-display text-3xl font-semibold text-dark-text">
-            {data?.company_name ?? symbol}
+            {dcfData?.company_name ?? symbol}
           </h1>
-          <p className="font-mono text-sm text-slate">{symbol}</p>
+          <p className="font-mono text-sm text-slate">{symbol?.toUpperCase()}</p>
         </div>
-        {data && (
-          <div className="text-right">
-            <p className="font-mono text-2xl font-semibold text-dark-text">
-              ${data.current_price.toFixed(2)}
-            </p>
-            <p
-              className={`text-sm font-medium ${
-                data.premium_discount_pct > 0 ? "text-red-600" : "text-green-600"
-              }`}
-            >
-              {data.premium_discount_pct > 0 ? "+" : ""}
-              {formatPct(data.premium_discount_pct)} vs intrinsic
+        {dcfData && (
+          <div className="text-right shrink-0">
+            <p className="font-mono text-2xl font-semibold text-dark-text">${dcfData.current_price.toFixed(2)}</p>
+            <p className={`text-sm font-medium ${dcfData.premium_discount_pct > 0 ? "text-red-500" : "text-green-600"}`}>
+              {dcfData.premium_discount_pct > 0 ? "+" : ""}
+              {(dcfData.premium_discount_pct * 100).toFixed(1)}% vs intrinsic
             </p>
           </div>
         )}
       </div>
 
       <div className="flex gap-1 border-b border-slate-200 mb-8">
-        {TABS.map((tab) => (
+        {TABS.map((t) => (
           <button
-            key={tab.key}
-            disabled={!tab.active}
+            key={t.key}
+            disabled={!t.available}
+            onClick={() => t.available && setTab(t.key)}
             className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-              tab.active
-                ? tab.color
-                : "border-transparent text-slate-light cursor-not-allowed"
+              t.available && tab === t.key ? t.colorClass
+              : t.available ? "border-transparent text-slate hover:text-slate-dark"
+              : "border-transparent text-slate-light cursor-not-allowed"
             }`}
-            title={tab.active ? undefined : "Coming soon"}
           >
-            {tab.label}
-            {!tab.active && <span className="ml-1.5 text-[10px] align-top">soon</span>}
+            {t.label}
+            {!t.available && <span className="ml-1.5 text-[10px] align-top opacity-60">soon</span>}
           </button>
         ))}
       </div>
 
-      {loading && <p className="text-slate">Running DCF valuation…</p>}
+      {tab === "fundamental" && (
+        <div className="space-y-6">
+          {dcfError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{dcfError}</div>
+          )}
 
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
-        </div>
-      )}
-
-      {data && !loading && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <p className="font-mono text-xs text-slate-light uppercase tracking-wide mb-4">
-            DCF Output — base case assumptions
-          </p>
-          <dl className="grid grid-cols-2 gap-y-3 text-sm">
-            {[
-              ["WACC", formatPct(data.wacc)],
-              ["Cost of Equity", formatPct(data.cost_of_equity)],
-              ["PV of Projected FCF", formatCurrency(data.pv_projected_fcf.reduce((a, b) => a + b, 0))],
-              ["PV of Terminal Value", formatCurrency(data.pv_terminal_value)],
-              ["Terminal Value % of EV", formatPct(data.terminal_value_pct_of_ev)],
-              ["Enterprise Value", formatCurrency(data.enterprise_value)],
-              ["Equity Value", formatCurrency(data.equity_value)],
-              ["Intrinsic Value / Share", `$${data.intrinsic_value_per_share.toFixed(2)}`],
-            ].map(([label, value]) => (
-              <div key={label} className="flex flex-col">
-                <dt className="text-slate-light text-xs">{label}</dt>
-                <dd className="font-mono font-medium text-dark-text">{value}</dd>
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.6fr] gap-6">
+            <AssumptionsPanel
+              assumptions={assumptions}
+              onChange={(next) => setAssumptions((prev) => ({ ...prev, ...next }))}
+              loading={dcfLoading}
+            />
+            {dcfLoading && !dcfData ? (
+              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm flex items-center justify-center min-h-[200px]">
+                <p className="text-slate text-sm animate-pulse">Running DCF valuation…</p>
               </div>
-            ))}
-          </dl>
-          <p className="text-xs text-slate-light mt-6 border-t border-slate-100 pt-4">
-            Editable assumption sliders (WACC, growth rate, projection years) and
-            comparable companies land in the next build pass.
-          </p>
+            ) : dcfData ? (
+              <DCFOutputCard data={dcfData} />
+            ) : null}
+          </div>
+
+          {compsLoading ? (
+            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-slate text-sm animate-pulse">Loading comparable companies…</p>
+            </div>
+          ) : compsData ? (
+            <CompsTable data={compsData} />
+          ) : null}
         </div>
       )}
     </div>

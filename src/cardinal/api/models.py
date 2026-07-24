@@ -85,5 +85,59 @@ class SearchResponse(BaseModel):
     results: list[SearchResult]
 
 
+class QuantResponse(BaseModel):
+    ticker: str
+    current_price: float
+    benchmark: str
+
+    # Momentum
+    momentum_20d: float | None
+    momentum_60d: float | None
+    momentum_252d: float | None
+
+    # Sharpe
+    sharpe_60d: float | None
+    sharpe_252d: float | None
+
+    # Beta
+    beta: float | None
+
+    # Volatility surface
+    vol_10d: float | None
+    vol_30d: float | None
+    vol_60d: float | None
+    vol_252d: float | None
+
+    # RSI & Bollinger
+    rsi: float | None
+    bb_upper: float | None
+    bb_middle: float | None
+    bb_lower: float | None
+    bb_pct_b: float | None
+
+
+class CurvePoint(BaseModel):
+    date: str
+    value: float
+
+
+class BacktestResponse(BaseModel):
+    ticker: str
+    strategy: str
+    params: dict
+
+    total_return: float
+    buy_hold_return: float
+    sharpe: float | None
+    max_drawdown: float
+    win_rate: float | None
+    num_trades: int
+    avg_win: float | None
+    avg_loss: float | None
+
+    pnl_curve: list[CurvePoint]
+    buy_hold_curve: list[CurvePoint]
+
+
 class ErrorResponse(BaseModel):
     detail: str

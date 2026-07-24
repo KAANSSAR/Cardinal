@@ -3,7 +3,6 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, Re
 import type { BacktestResponse, BacktestStrategy } from "../lib/api";
 
 interface Props {
-  ticker: string;
   onRun: (strategy: BacktestStrategy, params: Record<string, number>) => void;
   data: BacktestResponse | null;
   loading: boolean;
@@ -15,17 +14,16 @@ function fmtPct(v: number | null): string {
   return `${sign}${(v * 100).toFixed(1)}%`;
 }
 
-function MetricCard({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
+function MetricCard({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
     <div className="rounded-lg bg-slate-50 border border-slate-100 p-3 text-center">
       <p className="text-[11px] text-slate-light mb-1">{label}</p>
       <p className={`font-mono text-xl font-semibold ${color ?? "text-dark-text"}`}>{value}</p>
-      {sub && <p className="text-[10px] text-slate-light mt-0.5">{sub}</p>}
     </div>
   );
 }
 
-export default function BacktestView({ ticker, onRun, data, loading }: Props) {
+export default function BacktestView({ onRun, data, loading }: Props) {
   const [strategy, setStrategy] = useState<BacktestStrategy>("momentum");
   const [fastWindow, setFastWindow] = useState(50);
   const [slowWindow, setSlowWindow] = useState(200);
@@ -33,18 +31,17 @@ export default function BacktestView({ ticker, onRun, data, loading }: Props) {
   const [entryZ, setEntryZ] = useState(2.0);
 
   function handleRun() {
-    const params = strategy === "momentum"
+    const params: Record<string, number> = strategy === "momentum"
       ? { fast_window: fastWindow, slow_window: slowWindow }
-      : { lookback, entry_z: entryZ };
+      : { lookback: lookback, entry_z: entryZ };
     onRun(strategy, params);
   }
 
-  // Merge pnl + buy_hold curves for recharts
   const chartData = data
     ? data.pnl_curve.map((p, i) => ({
         date: p.date,
         strategy: parseFloat(((p.value - 1) * 100).toFixed(2)),
-        buyHold: parseFloat(((data.buy_hold_curve[i]?.value ?? 1) - 1) * 100).toFixed(2),
+        buyHold: parseFloat((((data.buy_hold_curve[i]?.value ?? 1) - 1) * 100).toFixed(2)),
       }))
     : [];
 
@@ -132,7 +129,6 @@ export default function BacktestView({ ticker, onRun, data, loading }: Props) {
       {/* Results */}
       {data && (
         <>
-          {/* Metrics grid */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <MetricCard
               label="Strategy return"
@@ -171,7 +167,6 @@ export default function BacktestView({ ticker, onRun, data, loading }: Props) {
             />
           </div>
 
-          {/* Outperformance callout */}
           {outperformance != null && (
             <div className={`rounded-lg px-4 py-3 text-sm ${outperformance >= 0 ? "bg-green-50 border border-green-200 text-green-700" : "bg-red-50 border border-red-200 text-red-700"}`}>
               Strategy {outperformance >= 0 ? "outperformed" : "underperformed"} buy-and-hold by{" "}
@@ -179,7 +174,6 @@ export default function BacktestView({ ticker, onRun, data, loading }: Props) {
             </div>
           )}
 
-          {/* P&L chart */}
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <p className="font-mono text-[11px] text-slate-light uppercase tracking-wide mb-4">
               P&L curve vs buy-and-hold (5 years, cumulative %)
@@ -189,17 +183,20 @@ export default function BacktestView({ ticker, onRun, data, loading }: Props) {
                 <XAxis
                   dataKey="date"
                   tick={{ fontSize: 10, fill: "#94A3B8" }}
-                  tickFormatter={(d) => d.slice(0, 7)}
+                  tickFormatter={(d: string) => d.slice(0, 7)}
                   interval={Math.floor(chartData.length / 6)}
                 />
                 <YAxis
                   tick={{ fontSize: 10, fill: "#94A3B8" }}
-                  tickFormatter={(v) => `${v > 0 ? "+" : ""}${v.toFixed(0)}%`}
+                  tickFormatter={(v: number) => `${v > 0 ? "+" : ""}${v.toFixed(0)}%`}
                   width={52}
                 />
                 <ReferenceLine y={0} stroke="#E2E8F0" />
                 <Tooltip
-                  formatter={(value: number) => [`${value > 0 ? "+" : ""}${value.toFixed(1)}%`]}
+                  formatter={(value) => {
+                    const v = Number(value);
+                    return [`${v > 0 ? "+" : ""}${v.toFixed(1)}%`];
+                  }}
                   labelFormatter={(l) => `Date: ${l}`}
                   contentStyle={{ fontSize: 12, borderRadius: 8 }}
                 />

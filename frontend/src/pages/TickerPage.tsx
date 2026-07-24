@@ -193,7 +193,6 @@ export default function TickerPage() {
       {/* ── Backtest tab ────────────────────────────────────────────────────── */}
       {tab === "backtest" && (
         <BacktestView
-          ticker={symbol ?? ""}
           onRun={handleRunBacktest}
           data={backtestData}
           loading={backtestLoading}

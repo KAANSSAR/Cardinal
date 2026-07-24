@@ -69,13 +69,13 @@ function Row({ label, value, signal, signalColor, interpretation }: {
 }
 
 export default function QuantDashboard({ data }: Props) {
-  // Volatility term structure
   const vols = [
     { label: "10d", value: data.vol_10d },
     { label: "30d", value: data.vol_30d },
     { label: "60d", value: data.vol_60d },
     { label: "252d", value: data.vol_252d },
   ];
+  const annualVol = data.vol_252d ?? 0;
 
   return (
     <div className="space-y-6">
@@ -100,9 +100,8 @@ export default function QuantDashboard({ data }: Props) {
             </tr>
           </thead>
           <tbody>
-            {/* Momentum */}
             {(["momentum_20d", "momentum_60d", "momentum_252d"] as const).map((key) => {
-              const window = key.replace("momentum_", "").replace("d", "d");
+              const window = key.replace("momentum_", "");
               const val = data[key];
               const { signal, color } = getSignal("momentum", val);
               const interp = val == null ? "Insufficient data"
@@ -110,47 +109,31 @@ export default function QuantDashboard({ data }: Props) {
                 : val < -0.3 ? "Strong downward trend"
                 : "Trend is neutral";
               return (
-                <Row
-                  key={key}
-                  label={`Momentum (${window})`}
-                  value={fmtNum(val, 4)}
-                  signal={signal}
-                  signalColor={color}
-                  interpretation={interp}
-                />
+                <Row key={key} label={`Momentum (${window})`} value={fmtNum(val, 4)}
+                  signal={signal} signalColor={color} interpretation={interp} />
               );
             })}
 
-            {/* Sharpe */}
             {(["sharpe_60d", "sharpe_252d"] as const).map((key) => {
-              const window = key.replace("sharpe_", "").replace("d", "d");
+              const window = key.replace("sharpe_", "");
               const val = data[key];
               const { signal, color } = getSignal("sharpe", val);
               return (
-                <Row
-                  key={key}
-                  label={`Rolling Sharpe (${window})`}
-                  value={fmtNum(val, 4)}
-                  signal={signal}
-                  signalColor={color}
-                  interpretation={val == null ? "—" : val > 1 ? "Risk well compensated" : val < 0 ? "Return < risk-free rate" : "Moderate risk-adj return"}
-                />
+                <Row key={key} label={`Rolling Sharpe (${window})`} value={fmtNum(val, 4)}
+                  signal={signal} signalColor={color}
+                  interpretation={val == null ? "—" : val > 1 ? "Risk well compensated" : val < 0 ? "Return < risk-free rate" : "Moderate risk-adj return"} />
               );
             })}
 
-            {/* Beta */}
             <Row
-              label="Beta vs benchmark"
-              value={fmtNum(data.beta, 3)}
+              label="Beta vs benchmark" value={fmtNum(data.beta, 3)}
               signal={getSignal("beta", data.beta).signal}
               signalColor={getSignal("beta", data.beta).color}
               interpretation={data.beta == null ? "—" : `Moves ${data.beta.toFixed(2)}× the benchmark`}
             />
 
-            {/* RSI */}
             <Row
-              label="RSI (14-period)"
-              value={fmtNum(data.rsi, 1)}
+              label="RSI (14-period)" value={fmtNum(data.rsi, 1)}
               signal={getSignal("rsi", data.rsi).signal}
               signalColor={getSignal("rsi", data.rsi).color}
               interpretation={
@@ -161,10 +144,8 @@ export default function QuantDashboard({ data }: Props) {
               }
             />
 
-            {/* Bollinger %B */}
             <Row
-              label="Bollinger %B"
-              value={fmtNum(data.bb_pct_b, 3)}
+              label="Bollinger %B" value={fmtNum(data.bb_pct_b, 3)}
               signal={
                 data.bb_pct_b == null ? "NEUTRAL"
                 : data.bb_pct_b < 0.2 ? "OVERSOLD"
@@ -195,9 +176,7 @@ export default function QuantDashboard({ data }: Props) {
         </p>
         <div className="flex gap-3">
           {vols.map(({ label, value }) => {
-            const near = data.vol_10d ?? 0;
-            const far = data.vol_252d ?? 0;
-            const isElevated = value != null && far > 0 && value > far * 1.15;
+            const isElevated = value != null && annualVol > 0 && value > annualVol * 1.15;
             return (
               <div key={label} className={`flex-1 rounded-lg p-3 text-center border ${isElevated ? "border-amber/40 bg-amber/5" : "border-slate-100 bg-slate-50"}`}>
                 <p className="text-[11px] text-slate-light mb-1">{label}</p>
@@ -210,7 +189,6 @@ export default function QuantDashboard({ data }: Props) {
           })}
         </div>
 
-        {/* Bollinger band levels */}
         {data.bb_upper != null && (
           <div className="mt-4 pt-4 border-t border-slate-100 grid grid-cols-3 gap-3">
             {[

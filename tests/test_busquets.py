@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
+from cardinal.agents import cache as agent_cache
 
 from cardinal.agents.busquets import build_backtest_snapshot, run_busquets
 from cardinal.api.main import app
@@ -129,6 +130,9 @@ class TestRunBusquets:
 
 
 class TestBusquetsEndpoint:
+    def setup_method(self):
+        agent_cache.clear()
+
     def _fake_history(self):
         np.random.seed(42)
         n = 756

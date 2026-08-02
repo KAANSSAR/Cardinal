@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
+from cardinal.agents import cache as agent_cache
 
 from cardinal.agents.iniesta import build_quant_snapshot, run_iniesta
 from cardinal.api.main import app
@@ -111,6 +112,9 @@ class TestRunIniesta:
 
 
 class TestIniestaEndpoint:
+    def setup_method(self):
+        agent_cache.clear()
+
     def _fake_history(self):
         import pandas as pd
         import numpy as np

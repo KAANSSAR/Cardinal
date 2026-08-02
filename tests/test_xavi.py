@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from cardinal.agents import cache as agent_cache
 
 from cardinal.agents.xavi import build_fundamental_snapshot, run_xavi
 from cardinal.api.main import app
@@ -147,6 +148,9 @@ class TestRunXavi:
 # ── API endpoint ──────────────────────────────────────────────────────────────
 
 class TestXaviEndpoint:
+    def setup_method(self):
+        agent_cache.clear()
+
     def test_returns_200_with_memo(self):
         with patch("cardinal.api.main.fetch_financial_snapshot", return_value=FAKE_SNAPSHOT), \
              patch("cardinal.api.main.fetch_company_profile", return_value=FAKE_PROFILE), \

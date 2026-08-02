@@ -160,6 +160,33 @@ class BusquetsRequest(BaseModel):
     commission: float = 0.001
 
 
+class MessiRequest(BaseModel):
+    ticker: str
+    user_question: str | None = None
+    # DCF assumptions forwarded to Xavi
+    growth_rate: float = 0.08
+    terminal_growth_rate: float = 0.035
+    projection_years: int = 5
+    wacc_override: float | None = None
+    # Backtest params forwarded to Busquets
+    strategy: str = "momentum"
+    fast_window: int = 50
+    slow_window: int = 200
+    lookback: int = 20
+    entry_z: float = 2.0
+    commission: float = 0.001
+
+
+class MessiResponse(BaseModel):
+    ticker: str
+    xavi_memo: str
+    iniesta_memo: str
+    busquets_memo: str
+    synthesis_memo: str   # Messi's final verdict
+    news_used: bool
+    cached_agents: list[str]  # which agents were served from cache e.g. ["iniesta"]
+
+
 class AgentResponse(BaseModel):
     agent: str          # "xavi" | "iniesta" | "busquets" | "messi"
     ticker: str

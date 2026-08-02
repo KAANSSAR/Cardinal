@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
 from cardinal.api.models import (
-    AgentRequest, AgentResponse, BusquetsRequest,
+    AgentRequest, AgentResponse, BusquetsRequest, MessiRequest, MessiResponse,
     BacktestResponse, BalanceSheetResponse, CompsResponse, CurvePoint,
     DCFAssumptionsRequest, DCFResponse, IncomeStatementResponse,
     PeerMetricsOut, PriceHistoryResponse, PricePoint,
@@ -19,6 +19,8 @@ from cardinal.agents.gemini_client import GeminiNotConfiguredError
 from cardinal.agents.xavi import build_fundamental_snapshot, run_xavi
 from cardinal.agents.iniesta import build_quant_snapshot, run_iniesta
 from cardinal.agents.busquets import build_backtest_snapshot, run_busquets
+from cardinal.agents.messi import run_messi
+from cardinal.agents import cache as agent_cache
 from cardinal.config import settings
 from cardinal.core.backtest import run_mean_reversion_backtest, run_momentum_backtest
 from cardinal.core.comps import PeerMetrics, compute_comps
@@ -440,7 +442,16 @@ def post_xavi(request: AgentRequest) -> AgentResponse:
         implied_ev_from_revenue=implied_ev_revenue,
     )
 
-    # 4. Call Gemini
+    # 4. Call Gemini — check cache first
+    xavi_key = agent_cache.make_key(
+        "xavi", request.ticker.upper(),
+        request.growth_rate, request.terminal_growth_rate,
+        request.projection_years, request.wacc_override,
+    )
+    cached = agent_cache.get(xavi_key)
+    if cached:
+        return AgentResponse(agent="xavi", ticker=request.ticker.upper(), memo=cached, news_used=False)
+
     try:
         memo = run_xavi(
             snapshot=snapshot_str,
@@ -451,6 +462,7 @@ def post_xavi(request: AgentRequest) -> AgentResponse:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Xavi agent error: {e}") from e
 
+    agent_cache.set(xavi_key, memo)
     return AgentResponse(agent="xavi", ticker=request.ticker.upper(), memo=memo, news_used=False)
 
 
@@ -506,6 +518,12 @@ def post_iniesta(request: AgentRequest) -> AgentResponse:
         bb_pct_b=snap.bb_pct_b,
     )
 
+    # Iniesta cache key — depends only on ticker (no user-tunable params)
+    iniesta_key = agent_cache.make_key("iniesta", request.ticker.upper())
+    cached = agent_cache.get(iniesta_key)
+    if cached:
+        return AgentResponse(agent="iniesta", ticker=request.ticker.upper(), memo=cached, news_used=False)
+
     try:
         memo = run_iniesta(
             snapshot=snapshot_str,
@@ -516,6 +534,7 @@ def post_iniesta(request: AgentRequest) -> AgentResponse:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Iniesta agent error: {e}") from e
 
+    agent_cache.set(iniesta_key, memo)
     return AgentResponse(agent="iniesta", ticker=request.ticker.upper(), memo=memo, news_used=False)
 
 
@@ -576,6 +595,16 @@ def post_busquets(request: BusquetsRequest) -> AgentResponse:
         buy_hold_curve=result.buy_hold_curve,
     )
 
+    # Busquets cache key — depends on ticker + strategy + params
+    busquets_key = agent_cache.make_key(
+        "busquets", request.ticker.upper(), request.strategy,
+        request.fast_window, request.slow_window,
+        request.lookback, request.entry_z, request.commission,
+    )
+    cached = agent_cache.get(busquets_key)
+    if cached:
+        return AgentResponse(agent="busquets", ticker=request.ticker.upper(), memo=cached, news_used=False)
+
     try:
         memo = run_busquets(
             snapshot=snapshot_str,
@@ -586,4 +615,218 @@ def post_busquets(request: BusquetsRequest) -> AgentResponse:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Busquets agent error: {e}") from e
 
+    agent_cache.set(busquets_key, memo)
     return AgentResponse(agent="busquets", ticker=request.ticker.upper(), memo=memo, news_used=False)
+
+
+@app.post("/agent/messi", response_model=MessiResponse)
+def post_messi(request: MessiRequest) -> MessiResponse:
+    """
+    Messi — Portfolio Manager synthesis agent.
+    Orchestrates the full team but checks each agent's cache first.
+    Only re-runs agents whose cached memo has expired or doesn't exist.
+    Returns all four memos so the frontend can populate each sidebar tab.
+    """
+    ticker = request.ticker.upper()
+    cached_agents: list[str] = []
+
+    # ── Cache keys ────────────────────────────────────────────────────────────
+    xavi_key = agent_cache.make_key(
+        "xavi", ticker,
+        request.growth_rate, request.terminal_growth_rate,
+        request.projection_years, request.wacc_override,
+    )
+    iniesta_key = agent_cache.make_key("iniesta", ticker)
+    busquets_key = agent_cache.make_key(
+        "busquets", ticker, request.strategy,
+        request.fast_window, request.slow_window,
+        request.lookback, request.entry_z, request.commission,
+    )
+
+    xavi_memo = agent_cache.get(xavi_key)
+    iniesta_memo = agent_cache.get(iniesta_key)
+    busquets_memo = agent_cache.get(busquets_key)
+
+    if xavi_memo:
+        cached_agents.append("xavi")
+    if iniesta_memo:
+        cached_agents.append("iniesta")
+    if busquets_memo:
+        cached_agents.append("busquets")
+
+    # ── Step 1: Xavi (only if not cached) ────────────────────────────────────
+    if not xavi_memo:
+        try:
+            snapshot_data = fetch_financial_snapshot(request.ticker)
+            profile = fetch_company_profile(request.ticker)
+        except TickerNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except InsufficientDataError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+
+        try:
+            dcf_assumptions = DCFAssumptions(
+                growth_rate=request.growth_rate,
+                terminal_growth_rate=request.terminal_growth_rate,
+                projection_years=request.projection_years,
+                wacc_override=request.wacc_override,
+            )
+            dcf_result = run_dcf(snapshot_data, dcf_assumptions)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+        peers_list: list[dict] = []
+        median_ev_ebitda = median_pe = median_ev_revenue = median_ps = None
+        implied_ev_ebitda = implied_ev_revenue = None
+        if settings.fmp_configured:
+            try:
+                peer_tickers = get_stock_peers(request.ticker)[:5]
+                target_m = _build_peer_metrics_yf(request.ticker)
+                if target_m:
+                    peers_built = [
+                        pm for t in peer_tickers
+                        if (pm := _build_peer_metrics_yf(t)) is not None
+                    ]
+                    comps_result = compute_comps(ticker, target_m, peers_built)
+                    median_ev_ebitda = comps_result.median_ev_ebitda
+                    median_pe = comps_result.median_pe
+                    median_ev_revenue = comps_result.median_ev_revenue
+                    median_ps = comps_result.median_ps
+                    implied_ev_ebitda = comps_result.implied_ev_from_ebitda
+                    implied_ev_revenue = comps_result.implied_ev_from_revenue
+                    peers_list = [
+                        {
+                            "ticker": p.ticker,
+                            "ev_ebitda": round(p.ev_ebitda, 2) if p.ev_ebitda else None,
+                            "pe_ratio": round(p.pe_ratio, 2) if p.pe_ratio else None,
+                            "ev_revenue": round(p.ev_revenue, 2) if p.ev_revenue else None,
+                        }
+                        for p in comps_result.peers
+                    ]
+            except Exception:
+                pass
+
+        xavi_snapshot = build_fundamental_snapshot(
+            ticker=ticker, company_name=profile.name,
+            current_price=dcf_result.current_price,
+            intrinsic_value=dcf_result.intrinsic_value_per_share,
+            premium_discount_pct=dcf_result.premium_discount_pct,
+            wacc=dcf_result.wacc, cost_of_equity=dcf_result.cost_of_equity,
+            growth_rate=request.growth_rate,
+            terminal_growth_rate=request.terminal_growth_rate,
+            projection_years=request.projection_years,
+            terminal_value_pct_of_ev=dcf_result.terminal_value_pct_of_ev,
+            enterprise_value=dcf_result.enterprise_value,
+            equity_value=dcf_result.equity_value,
+            pv_projected_fcf=dcf_result.pv_projected_fcf,
+            pv_terminal_value=dcf_result.pv_terminal_value,
+            peers=peers_list or None,
+            median_ev_ebitda=median_ev_ebitda, median_pe=median_pe,
+            median_ev_revenue=median_ev_revenue, median_ps=median_ps,
+            implied_ev_from_ebitda=implied_ev_ebitda,
+            implied_ev_from_revenue=implied_ev_revenue,
+        )
+        try:
+            xavi_memo = run_xavi(snapshot=xavi_snapshot)
+            agent_cache.set(xavi_key, xavi_memo)
+        except GeminiNotConfiguredError as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Xavi agent error: {e}") from e
+
+    # ── Step 2: Iniesta + Busquets (share price history fetch) ───────────────
+    if not iniesta_memo or not busquets_memo:
+        try:
+            history = fetch_price_history(request.ticker, period="5y", interval="1d")
+        except TickerNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        prices = history["Close"].dropna()
+
+        if not iniesta_memo:
+            benchmark_sym = benchmark_for_ticker(request.ticker)
+            bench_prices = None
+            try:
+                bench_hist = fetch_price_history(benchmark_sym, period="5y", interval="1d")
+                if not bench_hist.empty:
+                    bench_prices = bench_hist["Close"].dropna()
+            except Exception:
+                pass
+            quant_snap = compute_quant_snapshot(ticker, prices, bench_prices)
+            iniesta_snapshot = build_quant_snapshot(
+                ticker=quant_snap.ticker, current_price=quant_snap.current_price,
+                benchmark=benchmark_for_ticker(request.ticker),
+                momentum_20d=quant_snap.momentum_20d, momentum_60d=quant_snap.momentum_60d,
+                momentum_252d=quant_snap.momentum_252d, sharpe_60d=quant_snap.sharpe_60d,
+                sharpe_252d=quant_snap.sharpe_252d, beta=quant_snap.beta,
+                vol_10d=quant_snap.vol_10d, vol_30d=quant_snap.vol_30d,
+                vol_60d=quant_snap.vol_60d, vol_252d=quant_snap.vol_252d,
+                rsi=quant_snap.rsi, bb_upper=quant_snap.bb_upper,
+                bb_middle=quant_snap.bb_middle, bb_lower=quant_snap.bb_lower,
+                bb_pct_b=quant_snap.bb_pct_b,
+            )
+            try:
+                iniesta_memo = run_iniesta(snapshot=iniesta_snapshot)
+                agent_cache.set(iniesta_key, iniesta_memo)
+            except GeminiNotConfiguredError as e:
+                raise HTTPException(status_code=503, detail=str(e)) from e
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Iniesta agent error: {e}") from e
+
+        if not busquets_memo:
+            try:
+                if request.strategy == "momentum":
+                    bt_result = run_momentum_backtest(
+                        ticker, prices,
+                        fast_window=request.fast_window,
+                        slow_window=request.slow_window,
+                        commission=request.commission,
+                    )
+                else:
+                    bt_result = run_mean_reversion_backtest(
+                        ticker, prices,
+                        lookback=request.lookback,
+                        entry_z=request.entry_z,
+                        commission=request.commission,
+                    )
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+
+            busquets_snapshot = build_backtest_snapshot(
+                ticker=bt_result.ticker, strategy=bt_result.strategy, params=bt_result.params,
+                total_return=bt_result.total_return, buy_hold_return=bt_result.buy_hold_return,
+                sharpe=bt_result.sharpe, max_drawdown=bt_result.max_drawdown,
+                win_rate=bt_result.win_rate, num_trades=bt_result.num_trades,
+                avg_win=bt_result.avg_win, avg_loss=bt_result.avg_loss,
+                pnl_curve=bt_result.pnl_curve, buy_hold_curve=bt_result.buy_hold_curve,
+            )
+            try:
+                busquets_memo = run_busquets(snapshot=busquets_snapshot)
+                agent_cache.set(busquets_key, busquets_memo)
+            except GeminiNotConfiguredError as e:
+                raise HTTPException(status_code=503, detail=str(e)) from e
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Busquets agent error: {e}") from e
+
+    # ── Step 3: Messi synthesises ─────────────────────────────────────────────
+    try:
+        synthesis = run_messi(
+            ticker=ticker,
+            xavi_memo=xavi_memo,
+            iniesta_memo=iniesta_memo,
+            busquets_memo=busquets_memo,
+            user_question=request.user_question,
+        )
+    except GeminiNotConfiguredError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Messi agent error: {e}") from e
+
+    return MessiResponse(
+        ticker=ticker,
+        xavi_memo=xavi_memo,
+        iniesta_memo=iniesta_memo,
+        busquets_memo=busquets_memo,
+        synthesis_memo=synthesis,
+        news_used=False,
+        cached_agents=cached_agents,
+    )

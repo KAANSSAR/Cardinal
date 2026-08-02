@@ -23,6 +23,19 @@ async function apiGet<T>(path: string, params?: Record<string, string | number>)
   return response.json() as Promise<T>;
 }
 
+async function apiPost<T>(path: string, body: object): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: response.statusText }));
+    throw new ApiError(err.detail ?? "Request failed", response.status);
+  }
+  return response.json() as Promise<T>;
+}
+
 // ── DCF ──────────────────────────────────────────────────────────────────────
 
 export interface DCFAssumptions {
@@ -161,4 +174,55 @@ export function fetchBacktest(
   params: Record<string, number> = {}
 ) {
   return apiGet<BacktestResponse>(`/ticker/${ticker}/backtest`, { strategy, ...params });
+}
+
+// ── Agents ────────────────────────────────────────────────────────────────────
+
+export interface AgentResponse {
+  agent: string;
+  ticker: string;
+  memo: string;
+  news_used: boolean;
+}
+
+export interface MessiResponse {
+  ticker: string;
+  xavi_memo: string;
+  iniesta_memo: string;
+  busquets_memo: string;
+  synthesis_memo: string;
+  news_used: boolean;
+  cached_agents: string[];
+}
+
+export interface MessiParams {
+  ticker: string;
+  user_question?: string;
+  // DCF assumptions
+  growth_rate?: number;
+  terminal_growth_rate?: number;
+  projection_years?: number;
+  wacc_override?: number;
+  // Backtest params
+  strategy?: BacktestStrategy;
+  fast_window?: number;
+  slow_window?: number;
+  lookback?: number;
+  entry_z?: number;
+}
+
+export function fetchMessi(params: MessiParams) {
+  return apiPost<MessiResponse>("/agent/messi", params);
+}
+
+export function fetchXavi(ticker: string, assumptions: Partial<DCFAssumptions> = {}) {
+  return apiPost<AgentResponse>("/agent/xavi", { ticker, ...assumptions });
+}
+
+export function fetchIniesta(ticker: string) {
+  return apiPost<AgentResponse>("/agent/iniesta", { ticker });
+}
+
+export function fetchBusquets(ticker: string, strategy: BacktestStrategy = "momentum", params: Record<string, number> = {}) {
+  return apiPost<AgentResponse>("/agent/busquets", { ticker, strategy, ...params });
 }

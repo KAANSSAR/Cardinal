@@ -139,6 +139,26 @@ class BacktestResponse(BaseModel):
     buy_hold_curve: list[CurvePoint]
 
 
+class MessiChatMessage(BaseModel):
+    role: str   # "user" or "assistant"
+    content: str
+
+
+class MessiChatRequest(BaseModel):
+    ticker: str
+    xavi_memo: str
+    iniesta_memo: str
+    busquets_memo: str
+    synthesis_memo: str
+    message: str
+    history: list[MessiChatMessage] = []
+
+
+class MessiChatResponse(BaseModel):
+    reply: str
+    news_used: bool
+
+
 class AgentRequest(BaseModel):
     ticker: str
     user_question: str | None = None

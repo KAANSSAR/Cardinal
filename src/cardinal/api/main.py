@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from cardinal.api.models import (
     AgentRequest, AgentResponse, BusquetsRequest, MessiRequest, MessiResponse,
+    MessiChatRequest, MessiChatResponse,
     BacktestResponse, BalanceSheetResponse, CompsResponse, CurvePoint,
     DCFAssumptionsRequest, DCFResponse, IncomeStatementResponse,
     PeerMetricsOut, PriceHistoryResponse, PricePoint,
@@ -19,7 +20,7 @@ from cardinal.agents.gemini_client import GeminiNotConfiguredError
 from cardinal.agents.xavi import build_fundamental_snapshot, run_xavi
 from cardinal.agents.iniesta import build_quant_snapshot, run_iniesta
 from cardinal.agents.busquets import build_backtest_snapshot, run_busquets
-from cardinal.agents.messi import run_messi
+from cardinal.agents.messi import run_messi, run_messi_chat
 from cardinal.agents import cache as agent_cache
 from cardinal.agents.news import fetch_news_context
 from cardinal.config import settings
@@ -843,3 +844,38 @@ def post_messi(request: MessiRequest) -> MessiResponse:
         news_used=news_used,
         cached_agents=cached_agents,
     )
+
+
+@app.post("/agent/messi/chat", response_model=MessiChatResponse)
+def post_messi_chat(request: MessiChatRequest) -> MessiChatResponse:
+    """
+    Messi follow-up chat endpoint.
+    Answers questions strictly from the completed analysis memos.
+    Fetches fresh Tavily news for context.
+    Strict guardrails prevent hallucination or data fabrication.
+    """
+    if not request.synthesis_memo:
+        raise HTTPException(
+            status_code=400,
+            detail="synthesis_memo is required — run the full analysis first."
+        )
+
+    news = fetch_news_context(request.ticker.upper())
+
+    try:
+        reply = run_messi_chat(
+            ticker=request.ticker.upper(),
+            xavi_memo=request.xavi_memo,
+            iniesta_memo=request.iniesta_memo,
+            busquets_memo=request.busquets_memo,
+            synthesis_memo=request.synthesis_memo,
+            user_message=request.message,
+            history=[{"role": m.role, "content": m.content} for m in request.history],
+            news_context=news,
+        )
+    except GeminiNotConfiguredError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Messi chat error: {e}") from e
+
+    return MessiChatResponse(reply=reply, news_used=news is not None)

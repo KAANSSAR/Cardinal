@@ -21,6 +21,7 @@ from cardinal.agents.iniesta import build_quant_snapshot, run_iniesta
 from cardinal.agents.busquets import build_backtest_snapshot, run_busquets
 from cardinal.agents.messi import run_messi
 from cardinal.agents import cache as agent_cache
+from cardinal.agents.news import fetch_news_context
 from cardinal.config import settings
 from cardinal.core.backtest import run_mean_reversion_backtest, run_momentum_backtest
 from cardinal.core.comps import PeerMetrics, compute_comps
@@ -452,9 +453,11 @@ def post_xavi(request: AgentRequest) -> AgentResponse:
     if cached:
         return AgentResponse(agent="xavi", ticker=request.ticker.upper(), memo=cached, news_used=False)
 
+    news = fetch_news_context(request.ticker.upper(), profile.name)
     try:
         memo = run_xavi(
             snapshot=snapshot_str,
+            news_context=news,
             user_question=request.user_question,
         )
     except GeminiNotConfiguredError as e:
@@ -463,7 +466,7 @@ def post_xavi(request: AgentRequest) -> AgentResponse:
         raise HTTPException(status_code=500, detail=f"Xavi agent error: {e}") from e
 
     agent_cache.set(xavi_key, memo)
-    return AgentResponse(agent="xavi", ticker=request.ticker.upper(), memo=memo, news_used=False)
+    return AgentResponse(agent="xavi", ticker=request.ticker.upper(), memo=memo, news_used=news is not None)
 
 
 @app.post("/agent/iniesta", response_model=AgentResponse)
@@ -524,9 +527,11 @@ def post_iniesta(request: AgentRequest) -> AgentResponse:
     if cached:
         return AgentResponse(agent="iniesta", ticker=request.ticker.upper(), memo=cached, news_used=False)
 
+    news = fetch_news_context(request.ticker.upper())
     try:
         memo = run_iniesta(
             snapshot=snapshot_str,
+            news_context=news,
             user_question=request.user_question,
         )
     except GeminiNotConfiguredError as e:
@@ -535,7 +540,7 @@ def post_iniesta(request: AgentRequest) -> AgentResponse:
         raise HTTPException(status_code=500, detail=f"Iniesta agent error: {e}") from e
 
     agent_cache.set(iniesta_key, memo)
-    return AgentResponse(agent="iniesta", ticker=request.ticker.upper(), memo=memo, news_used=False)
+    return AgentResponse(agent="iniesta", ticker=request.ticker.upper(), memo=memo, news_used=news is not None)
 
 
 @app.post("/agent/busquets", response_model=AgentResponse)
@@ -605,9 +610,11 @@ def post_busquets(request: BusquetsRequest) -> AgentResponse:
     if cached:
         return AgentResponse(agent="busquets", ticker=request.ticker.upper(), memo=cached, news_used=False)
 
+    news = fetch_news_context(request.ticker.upper())
     try:
         memo = run_busquets(
             snapshot=snapshot_str,
+            news_context=news,
             user_question=request.user_question,
         )
     except GeminiNotConfiguredError as e:
@@ -616,7 +623,7 @@ def post_busquets(request: BusquetsRequest) -> AgentResponse:
         raise HTTPException(status_code=500, detail=f"Busquets agent error: {e}") from e
 
     agent_cache.set(busquets_key, memo)
-    return AgentResponse(agent="busquets", ticker=request.ticker.upper(), memo=memo, news_used=False)
+    return AgentResponse(agent="busquets", ticker=request.ticker.upper(), memo=memo, news_used=news is not None)
 
 
 @app.post("/agent/messi", response_model=MessiResponse)
@@ -653,6 +660,12 @@ def post_messi(request: MessiRequest) -> MessiResponse:
         cached_agents.append("iniesta")
     if busquets_memo:
         cached_agents.append("busquets")
+
+    # Fetch news once upfront — passed only to agents that need a fresh run
+    # Cached agents already have news baked into their memo from the first run
+    needs_fresh = not (xavi_memo and iniesta_memo and busquets_memo)
+    news = fetch_news_context(ticker) if needs_fresh else None
+    news_used = news is not None
 
     # ── Step 1: Xavi (only if not cached) ────────────────────────────────────
     if not xavi_memo:
@@ -727,7 +740,7 @@ def post_messi(request: MessiRequest) -> MessiResponse:
             implied_ev_from_revenue=implied_ev_revenue,
         )
         try:
-            xavi_memo = run_xavi(snapshot=xavi_snapshot)
+            xavi_memo = run_xavi(snapshot=xavi_snapshot, news_context=news)
             agent_cache.set(xavi_key, xavi_memo)
         except GeminiNotConfiguredError as e:
             raise HTTPException(status_code=503, detail=str(e)) from e
@@ -765,7 +778,7 @@ def post_messi(request: MessiRequest) -> MessiResponse:
                 bb_pct_b=quant_snap.bb_pct_b,
             )
             try:
-                iniesta_memo = run_iniesta(snapshot=iniesta_snapshot)
+                iniesta_memo = run_iniesta(snapshot=iniesta_snapshot, news_context=news)
                 agent_cache.set(iniesta_key, iniesta_memo)
             except GeminiNotConfiguredError as e:
                 raise HTTPException(status_code=503, detail=str(e)) from e
@@ -800,7 +813,7 @@ def post_messi(request: MessiRequest) -> MessiResponse:
                 pnl_curve=bt_result.pnl_curve, buy_hold_curve=bt_result.buy_hold_curve,
             )
             try:
-                busquets_memo = run_busquets(snapshot=busquets_snapshot)
+                busquets_memo = run_busquets(snapshot=busquets_snapshot, news_context=news)
                 agent_cache.set(busquets_key, busquets_memo)
             except GeminiNotConfiguredError as e:
                 raise HTTPException(status_code=503, detail=str(e)) from e
@@ -827,6 +840,6 @@ def post_messi(request: MessiRequest) -> MessiResponse:
         iniesta_memo=iniesta_memo,
         busquets_memo=busquets_memo,
         synthesis_memo=synthesis,
-        news_used=False,
+        news_used=news_used,
         cached_agents=cached_agents,
     )

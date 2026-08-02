@@ -139,5 +139,22 @@ class BacktestResponse(BaseModel):
     buy_hold_curve: list[CurvePoint]
 
 
+class AgentRequest(BaseModel):
+    ticker: str
+    user_question: str | None = None
+    # Optional: pass current DCF assumption overrides from the frontend sliders
+    growth_rate: float = 0.08
+    terminal_growth_rate: float = 0.035
+    projection_years: int = 5
+    wacc_override: float | None = None
+
+
+class AgentResponse(BaseModel):
+    agent: str          # "xavi" | "iniesta" | "busquets" | "messi"
+    ticker: str
+    memo: str           # the agent's full text output
+    news_used: bool     # whether Tavily news context was included
+
+
 class ErrorResponse(BaseModel):
     detail: str

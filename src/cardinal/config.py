@@ -11,6 +11,7 @@ class Settings:
     tavily_api_key: str | None = os.getenv("TAVILY_API_KEY")
     fmp_base_url: str = "https://financialmodelingprep.com/stable"
     fmp_configured: bool = bool(os.getenv("FMP_API_KEY"))
+    gemini_configured: bool = bool(os.getenv("GEMINI_API_KEY"))
 
 
 settings = Settings()

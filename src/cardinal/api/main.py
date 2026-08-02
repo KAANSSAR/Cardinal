@@ -9,11 +9,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
 from cardinal.api.models import (
+    AgentRequest, AgentResponse,
     BacktestResponse, BalanceSheetResponse, CompsResponse, CurvePoint,
     DCFAssumptionsRequest, DCFResponse, IncomeStatementResponse,
     PeerMetricsOut, PriceHistoryResponse, PricePoint,
     QuantResponse, SearchResponse, SearchResult,
 )
+from cardinal.agents.gemini_client import GeminiNotConfiguredError
+from cardinal.agents.xavi import build_fundamental_snapshot, run_xavi
 from cardinal.config import settings
 from cardinal.core.backtest import run_mean_reversion_backtest, run_momentum_backtest
 from cardinal.core.comps import PeerMetrics, compute_comps
@@ -347,3 +350,103 @@ def get_backtest(
         pnl_curve=[CurvePoint(date=p["date"], value=p["value"]) for p in result.pnl_curve],
         buy_hold_curve=[CurvePoint(date=p["date"], value=p["value"]) for p in result.buy_hold_curve],
     )
+
+@app.post("/agent/xavi", response_model=AgentResponse)
+def post_xavi(request: AgentRequest) -> AgentResponse:
+    """
+    Xavi — Fundamental Analyst agent.
+    Fetches Cardinal's DCF + comps data for the ticker, builds a frozen
+    read-only snapshot, and passes it to Gemini 2.5 Flash with strict
+    guardrails. The agent cannot modify any data — it only interprets it.
+    """
+    # 1. Fetch DCF data (re-uses existing endpoint logic)
+    try:
+        snapshot_data = fetch_financial_snapshot(request.ticker)
+        profile = fetch_company_profile(request.ticker)
+    except TickerNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except InsufficientDataError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+    try:
+        assumptions = DCFAssumptions(
+            growth_rate=request.growth_rate,
+            terminal_growth_rate=request.terminal_growth_rate,
+            projection_years=request.projection_years,
+            wacc_override=request.wacc_override,
+        )
+        dcf_result = run_dcf(snapshot_data, assumptions)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    # 2. Fetch comps (best-effort — don't fail if unavailable)
+    peers_list: list[dict] = []
+    median_ev_ebitda = median_pe = median_ev_revenue = median_ps = None
+    implied_ev_ebitda = implied_ev_revenue = None
+
+    if settings.fmp_configured:
+        try:
+            peer_tickers = get_stock_peers(request.ticker)[:5]
+            target_m = _build_peer_metrics_yf(request.ticker)
+            if target_m:
+                peers_built = [
+                    pm for t in peer_tickers
+                    if (pm := _build_peer_metrics_yf(t)) is not None
+                ]
+                comps_result = compute_comps(request.ticker.upper(), target_m, peers_built)
+                median_ev_ebitda = comps_result.median_ev_ebitda
+                median_pe = comps_result.median_pe
+                median_ev_revenue = comps_result.median_ev_revenue
+                median_ps = comps_result.median_ps
+                implied_ev_ebitda = comps_result.implied_ev_from_ebitda
+                implied_ev_revenue = comps_result.implied_ev_from_revenue
+                peers_list = [
+                    {
+                        "ticker": p.ticker,
+                        "ev_ebitda": round(p.ev_ebitda, 2) if p.ev_ebitda else None,
+                        "pe_ratio": round(p.pe_ratio, 2) if p.pe_ratio else None,
+                        "ev_revenue": round(p.ev_revenue, 2) if p.ev_revenue else None,
+                    }
+                    for p in comps_result.peers
+                ]
+        except Exception:
+            pass  # comps are best-effort; agent still runs without them
+
+    # 3. Build frozen snapshot string
+    snapshot_str = build_fundamental_snapshot(
+        ticker=request.ticker.upper(),
+        company_name=profile.name,
+        current_price=dcf_result.current_price,
+        intrinsic_value=dcf_result.intrinsic_value_per_share,
+        premium_discount_pct=dcf_result.premium_discount_pct,
+        wacc=dcf_result.wacc,
+        cost_of_equity=dcf_result.cost_of_equity,
+        growth_rate=request.growth_rate,
+        terminal_growth_rate=request.terminal_growth_rate,
+        projection_years=request.projection_years,
+        terminal_value_pct_of_ev=dcf_result.terminal_value_pct_of_ev,
+        enterprise_value=dcf_result.enterprise_value,
+        equity_value=dcf_result.equity_value,
+        pv_projected_fcf=dcf_result.pv_projected_fcf,
+        pv_terminal_value=dcf_result.pv_terminal_value,
+        peers=peers_list or None,
+        median_ev_ebitda=median_ev_ebitda,
+        median_pe=median_pe,
+        median_ev_revenue=median_ev_revenue,
+        median_ps=median_ps,
+        implied_ev_from_ebitda=implied_ev_ebitda,
+        implied_ev_from_revenue=implied_ev_revenue,
+    )
+
+    # 4. Call Gemini
+    try:
+        memo = run_xavi(
+            snapshot=snapshot_str,
+            user_question=request.user_question,
+        )
+    except GeminiNotConfiguredError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Xavi agent error: {e}") from e
+
+    return AgentResponse(agent="xavi", ticker=request.ticker.upper(), memo=memo, news_used=False)

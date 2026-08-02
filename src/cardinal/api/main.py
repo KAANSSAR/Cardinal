@@ -17,6 +17,7 @@ from cardinal.api.models import (
 )
 from cardinal.agents.gemini_client import GeminiNotConfiguredError
 from cardinal.agents.xavi import build_fundamental_snapshot, run_xavi
+from cardinal.agents.iniesta import build_quant_snapshot, run_iniesta
 from cardinal.config import settings
 from cardinal.core.backtest import run_mean_reversion_backtest, run_momentum_backtest
 from cardinal.core.comps import PeerMetrics, compute_comps
@@ -450,3 +451,68 @@ def post_xavi(request: AgentRequest) -> AgentResponse:
         raise HTTPException(status_code=500, detail=f"Xavi agent error: {e}") from e
 
     return AgentResponse(agent="xavi", ticker=request.ticker.upper(), memo=memo, news_used=False)
+
+
+@app.post("/agent/iniesta", response_model=AgentResponse)
+def post_iniesta(request: AgentRequest) -> AgentResponse:
+    """
+    Iniesta — Quantitative Analyst agent.
+    Fetches Cardinal's quant signal snapshot for the ticker and passes
+    it to Gemini 3.5 Flash with strict read-only guardrails.
+    """
+    try:
+        history = fetch_price_history(request.ticker, period="5y", interval="1d")
+    except TickerNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    if history.empty:
+        raise HTTPException(status_code=404, detail=f"No price history for '{request.ticker}'")
+
+    prices = history["Close"].dropna()
+    benchmark_sym = benchmark_for_ticker(request.ticker)
+
+    bench_prices = None
+    try:
+        bench_hist = fetch_price_history(benchmark_sym, period="5y", interval="1d")
+        if not bench_hist.empty:
+            bench_prices = bench_hist["Close"].dropna()
+    except Exception:
+        pass
+
+    try:
+        snap = compute_quant_snapshot(request.ticker.upper(), prices, bench_prices)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Quant computation failed: {e}") from e
+
+    snapshot_str = build_quant_snapshot(
+        ticker=snap.ticker,
+        current_price=snap.current_price,
+        benchmark=benchmark_sym,
+        momentum_20d=snap.momentum_20d,
+        momentum_60d=snap.momentum_60d,
+        momentum_252d=snap.momentum_252d,
+        sharpe_60d=snap.sharpe_60d,
+        sharpe_252d=snap.sharpe_252d,
+        beta=snap.beta,
+        vol_10d=snap.vol_10d,
+        vol_30d=snap.vol_30d,
+        vol_60d=snap.vol_60d,
+        vol_252d=snap.vol_252d,
+        rsi=snap.rsi,
+        bb_upper=snap.bb_upper,
+        bb_middle=snap.bb_middle,
+        bb_lower=snap.bb_lower,
+        bb_pct_b=snap.bb_pct_b,
+    )
+
+    try:
+        memo = run_iniesta(
+            snapshot=snapshot_str,
+            user_question=request.user_question,
+        )
+    except GeminiNotConfiguredError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Iniesta agent error: {e}") from e
+
+    return AgentResponse(agent="iniesta", ticker=request.ticker.upper(), memo=memo, news_used=False)

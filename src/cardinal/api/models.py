@@ -142,11 +142,22 @@ class BacktestResponse(BaseModel):
 class AgentRequest(BaseModel):
     ticker: str
     user_question: str | None = None
-    # Optional: pass current DCF assumption overrides from the frontend sliders
+    # Optional: DCF assumption overrides from frontend sliders
     growth_rate: float = 0.08
     terminal_growth_rate: float = 0.035
     projection_years: int = 5
     wacc_override: float | None = None
+
+
+class BusquetsRequest(BaseModel):
+    ticker: str
+    user_question: str | None = None
+    strategy: str = "momentum"          # "momentum" or "mean_reversion"
+    fast_window: int = 50               # momentum strategy
+    slow_window: int = 200              # momentum strategy
+    lookback: int = 20                  # mean reversion strategy
+    entry_z: float = 2.0               # mean reversion strategy
+    commission: float = 0.001
 
 
 class AgentResponse(BaseModel):

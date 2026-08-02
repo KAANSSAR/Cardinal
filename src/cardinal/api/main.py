@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
 from cardinal.api.models import (
-    AgentRequest, AgentResponse,
+    AgentRequest, AgentResponse, BusquetsRequest,
     BacktestResponse, BalanceSheetResponse, CompsResponse, CurvePoint,
     DCFAssumptionsRequest, DCFResponse, IncomeStatementResponse,
     PeerMetricsOut, PriceHistoryResponse, PricePoint,
@@ -18,6 +18,7 @@ from cardinal.api.models import (
 from cardinal.agents.gemini_client import GeminiNotConfiguredError
 from cardinal.agents.xavi import build_fundamental_snapshot, run_xavi
 from cardinal.agents.iniesta import build_quant_snapshot, run_iniesta
+from cardinal.agents.busquets import build_backtest_snapshot, run_busquets
 from cardinal.config import settings
 from cardinal.core.backtest import run_mean_reversion_backtest, run_momentum_backtest
 from cardinal.core.comps import PeerMetrics, compute_comps
@@ -516,3 +517,73 @@ def post_iniesta(request: AgentRequest) -> AgentResponse:
         raise HTTPException(status_code=500, detail=f"Iniesta agent error: {e}") from e
 
     return AgentResponse(agent="iniesta", ticker=request.ticker.upper(), memo=memo, news_used=False)
+
+
+@app.post("/agent/busquets", response_model=AgentResponse)
+def post_busquets(request: BusquetsRequest) -> AgentResponse:
+    """
+    Busquets — Strategy Reviewer agent.
+    Runs the selected backtest strategy on the ticker, builds a frozen
+    read-only snapshot of the results, and passes it to Gemini with
+    strict guardrails. The agent cannot modify any data.
+    """
+    try:
+        history = fetch_price_history(request.ticker, period="5y", interval="1d")
+    except TickerNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    if history.empty:
+        raise HTTPException(status_code=404, detail=f"No price history for '{request.ticker}'")
+
+    prices = history["Close"].dropna()
+
+    try:
+        if request.strategy == "momentum":
+            result = run_momentum_backtest(
+                request.ticker.upper(), prices,
+                fast_window=request.fast_window,
+                slow_window=request.slow_window,
+                commission=request.commission,
+            )
+        elif request.strategy == "mean_reversion":
+            result = run_mean_reversion_backtest(
+                request.ticker.upper(), prices,
+                lookback=request.lookback,
+                entry_z=request.entry_z,
+                commission=request.commission,
+            )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown strategy '{request.strategy}'. Use 'momentum' or 'mean_reversion'."
+            )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    snapshot_str = build_backtest_snapshot(
+        ticker=result.ticker,
+        strategy=result.strategy,
+        params=result.params,
+        total_return=result.total_return,
+        buy_hold_return=result.buy_hold_return,
+        sharpe=result.sharpe,
+        max_drawdown=result.max_drawdown,
+        win_rate=result.win_rate,
+        num_trades=result.num_trades,
+        avg_win=result.avg_win,
+        avg_loss=result.avg_loss,
+        pnl_curve=result.pnl_curve,
+        buy_hold_curve=result.buy_hold_curve,
+    )
+
+    try:
+        memo = run_busquets(
+            snapshot=snapshot_str,
+            user_question=request.user_question,
+        )
+    except GeminiNotConfiguredError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Busquets agent error: {e}") from e
+
+    return AgentResponse(agent="busquets", ticker=request.ticker.upper(), memo=memo, news_used=False)

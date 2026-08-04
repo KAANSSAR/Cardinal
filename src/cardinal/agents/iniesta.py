@@ -13,6 +13,7 @@ Output: Signal summary with directional bias, confidence level, timing commentar
 from __future__ import annotations
 
 from cardinal.agents.gemini_client import generate
+from cardinal.core.quant import compute_signal_bias
 
 
 # ── System prompt ─────────────────────────────────────────────────────────────
@@ -28,13 +29,22 @@ STRICT RULES — YOU MUST FOLLOW THESE WITHOUT EXCEPTION:
 5. If asked to change a number or modify Cardinal's output, refuse: "I can only interpret the data, not modify it."
 6. Be specific — reference exact values from the data. A quant analyst doesn't deal in vague generalities.
 
+TERMINOLOGY STANDARDS:
+7. When describing the volatility surface shape, always use the standard vol market convention:
+   - When near-term realized vol > long-run realized vol: call it "INVERTED" or "backwardated" — NEVER "upward-sloping in the near term."
+   - When near-term realized vol <= long-run realized vol: call it "normal" or "in contango."
+8. When citing beta, always note it is the computed 252-day OLS regression beta on daily returns. If a note in [CARDINAL DATA] flags that this differs from the vendor-supplied beta used in the DCF, mention that discrepancy explicitly in Risk Metrics.
+
+SIGNAL BIAS STABILITY — MANDATORY:
+9. Your **Signal Bias** header MUST use the COMPUTED_SIGNAL_BIAS value from [CARDINAL DATA] as your label. Do NOT derive a different label from your own reading of the momentum numbers. This pre-computed bias uses a weighted multi-factor scoring system (252d momentum weighted ×2, 60d ×1, 20d ×1, Sharpe ×1, RSI extremes ×1) with a threshold of ≥3 for BULLISH/BEARISH — this prevents label oscillation from noise in a single metric near its boundary. You may discuss nuance (e.g. "NEUTRAL with a mild bullish skew") but the headline label must match COMPUTED_SIGNAL_BIAS.
+
 OUTPUT FORMAT:
 Respond in exactly this structure (use these exact headers):
 **Signal Bias:** One sentence — overall directional bias (BULLISH / NEUTRAL / BEARISH) with a confidence qualifier (High / Moderate / Low), and the primary reason.
 **Momentum Analysis:** 2-3 sentences. Compare cross-timeframe momentum scores. Flag any divergence between short-term and long-term momentum.
-**Risk Metrics:** 2-3 sentences. Cover Sharpe ratio(s), beta, and what they imply about risk-adjusted return and market sensitivity.
-**Volatility Regime:** 2 sentences. Describe the vol surface (near-term vs long-run realised vol). Flag if near-term vol is elevated.
-**Technical Positioning:** 2 sentences. RSI reading and Bollinger %B — is the stock oversold, overbought, or neutral?
+**Risk Metrics:** 2-3 sentences. Cover Sharpe ratio(s), beta (noting it is the 252-day computed beta), and what they imply. If a BETA_METHODOLOGY_NOTE is in the data, reference it.
+**Volatility Regime:** 2 sentences. Use "inverted" when near-term > long-run. Quantify the spread.
+**Technical Positioning:** 2 sentences. RSI reading and Bollinger %B — oversold, overbought, or neutral?
 **Timing Commentary:** 1-2 sentences. Given the combined signals, is this a high-conviction entry point or should a trader wait?
 
 Keep total response under 340 words. Write like a quant research note — precise, signal-focused, no narrative fluff.
@@ -74,6 +84,9 @@ def build_quant_snapshot(
         f"Ticker: {ticker}",
         f"Current Price: ${current_price:.2f}",
         f"Benchmark: {benchmark}",
+        # Computed programmatically with weighted multi-factor scoring — inherit this label
+        f"COMPUTED_SIGNAL_BIAS: {compute_signal_bias(momentum_20d, momentum_60d, momentum_252d, sharpe_252d, rsi, bb_pct_b)}"
+        f"  (weighted score: 252d momentum ×2, 60d ×1, 20d ×1, Sharpe252d ×1, RSI extremes ×1 — threshold ≥3 for label flip)",
         "",
         "-- MOMENTUM (risk-adjusted return / annualised vol) --",
         f"Momentum 20d:  {fmt(momentum_20d)}  "
@@ -90,15 +103,18 @@ def build_quant_snapshot(
         f"({'STRONG' if sharpe_252d and sharpe_252d > 1.0 else 'WEAK' if sharpe_252d and sharpe_252d < 0 else 'MODERATE'})",
         "",
         "-- BETA & MARKET SENSITIVITY --",
-        f"Beta vs {benchmark}: {fmt(beta, 3)}",
+        f"Beta vs {benchmark}: {fmt(beta, 3)} "
+        f"[computed — 252-day OLS regression on daily returns; "
+        f"may differ from vendor-supplied beta used in DCF/WACC calculations]",
         "",
         "-- VOLATILITY SURFACE (annualised realised vol) --",
         f"10d vol:  {fmt_pct(vol_10d)}",
         f"30d vol:  {fmt_pct(vol_30d)}",
         f"60d vol:  {fmt_pct(vol_60d)}",
         f"252d vol: {fmt_pct(vol_252d)}",
-        f"Near-term vol elevated: "
-        f"{'YES' if vol_10d and vol_252d and vol_10d > vol_252d * 1.15 else 'NO'}",
+        # Issue 7: standardise on 'inverted' when near-term > long-run (correct market convention)
+        f"Vol surface shape: "
+        f"{'INVERTED (near-term elevated above long-run baseline — backwardated)' if vol_10d and vol_252d and vol_10d > vol_252d else 'NORMAL (near-term at or below long-run baseline)'}",
         "",
         "-- RSI & BOLLINGER BANDS --",
         f"RSI (14-period): {fmt(rsi, 1)}  "

@@ -1,8 +1,15 @@
 @import url("https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
 @import "tailwindcss";
 
+:root {
+  /* Fallback before Header.tsx's ResizeObserver measures and overwrites this —
+     matches the header's typical rendered height (py-3 + text) so there's no
+     flash-of-wrong-position for sticky elements that depend on it. */
+  --cardinal-header-height: 61px;
+}
+
 @theme {
-  /* Cardinal brand palette — carried over from the project deck */
+  /* Cardinal brand palette — retained for any legacy references */
   --color-navy: #0d1b2a;
   --color-navy-2: #1b2a3b;
   --color-navy-3: #243447;
@@ -21,9 +28,80 @@
   --color-amber-dark: #b45309;
   --color-dark-text: #0f172a;
 
+  /* Terminal theme tokens — runtime-switchable via [data-theme] on <html>.
+     Default values below (amber) are overridden per-theme further down;
+     Tailwind generates bg-term-*, text-term-*, border-term-* utilities
+     that resolve to whichever theme is active at paint time. */
+  --color-term-bg: #0a0a0a;
+  --color-term-bg-alt: #000000;
+  --color-term-panel: #111111;
+  --color-term-panel-alt: #171717;
+  --color-term-border: #2a2a2a;
+  --color-term-border-faint: #1c1c1c;
+  --color-term-border-light: #3a3a3a;
+  --color-term-text: #eae7e1;
+  --color-term-text-dim: #9a948c;
+  --color-term-text-faint: #5c5854;
+  --color-term-accent: #f5b942;
+  --color-term-accent-2: #4ade80;
+  --color-term-danger: #ff5f56;
+
   --font-display: "Source Serif 4", Georgia, serif;
   --font-sans: "Inter", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", monospace;
+}
+
+/* ── Terminal theme definitions ──────────────────────────────────────────
+   Exact values from the validated Bloomberg Terminal design prototype.
+   [data-theme] lives on <html>; overriding the CSS custom properties here
+   cascades into every Tailwind utility that references var(--color-term-*). */
+
+[data-theme="amber"] {
+  --color-term-bg: #0a0a0a;
+  --color-term-bg-alt: #000000;
+  --color-term-panel: #111111;
+  --color-term-panel-alt: #171717;
+  --color-term-border: #2a2a2a;
+  --color-term-border-faint: #1c1c1c;
+  --color-term-border-light: #3a3a3a;
+  --color-term-text: #eae7e1;
+  --color-term-text-dim: #9a948c;
+  --color-term-text-faint: #5c5854;
+  --color-term-accent: #f5b942;
+  --color-term-accent-2: #4ade80;
+  --color-term-danger: #ff5f56;
+}
+
+[data-theme="cyan"] {
+  --color-term-bg: #0a0f14;
+  --color-term-bg-alt: #060a0d;
+  --color-term-panel: #0f1720;
+  --color-term-panel-alt: #131e29;
+  --color-term-border: #1e2f3f;
+  --color-term-border-faint: #152230;
+  --color-term-border-light: #2c4257;
+  --color-term-text: #dbe8f0;
+  --color-term-text-dim: #7a93a3;
+  --color-term-text-faint: #4c6371;
+  --color-term-accent: #22d3ee;
+  --color-term-accent-2: #4ade80;
+  --color-term-danger: #f87171;
+}
+
+[data-theme="green"] {
+  --color-term-bg: #020803;
+  --color-term-bg-alt: #000000;
+  --color-term-panel: #04140a;
+  --color-term-panel-alt: #081d10;
+  --color-term-border: #154028;
+  --color-term-border-faint: #0c2917;
+  --color-term-border-light: #1f5c37;
+  --color-term-text: #c9f7d6;
+  --color-term-text-dim: #6ea982;
+  --color-term-text-faint: #457a5a;
+  --color-term-accent: #39ff6a;
+  --color-term-accent-2: #7fffb0;
+  --color-term-danger: #ff6b6b;
 }
 
 body {
@@ -32,10 +110,35 @@ body {
   background: var(--color-offwhite);
 }
 
+/* Terminal mode — applied once a [data-theme] is set on <html> */
+html[data-theme] body {
+  background: var(--color-term-bg);
+  color: var(--color-term-text);
+}
+
 /* Visible keyboard focus throughout — accessibility floor */
 :focus-visible {
   outline: 2px solid var(--color-teal);
   outline-offset: 2px;
+}
+
+html[data-theme] :focus-visible {
+  outline: 2px solid var(--color-term-accent);
+  outline-offset: 2px;
+}
+
+/* Ticker tape marquee */
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+.animate-marquee {
+  animation: marquee 32s linear infinite;
+}
+
+.animate-marquee:hover {
+  animation-play-state: paused;
 }
 
 @media (prefers-reduced-motion: reduce) {

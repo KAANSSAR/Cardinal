@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
+import { useEffect, useState } from "react";
+import { AreaChart, Area, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
+import { useTheme } from "../lib/ThemeContext";
 import type { BacktestResponse, BacktestStrategy } from "../lib/api";
 
 interface Props {
@@ -16,11 +17,35 @@ function fmtPct(v: number | null): string {
 
 function MetricCard({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
-    <div className="rounded-lg bg-slate-50 border border-slate-100 p-3 text-center">
-      <p className="text-[11px] text-slate-light mb-1">{label}</p>
-      <p className={`font-mono text-xl font-semibold ${color ?? "text-dark-text"}`}>{value}</p>
+    <div className="rounded-lg bg-term-panel-alt border border-term-border-faint p-3 text-center">
+      <p className="text-[11px] font-mono text-term-text-faint mb-1 uppercase tracking-wide">{label}</p>
+      <p className={`font-mono text-xl font-semibold ${color ?? "text-term-text"}`}>{value}</p>
     </div>
   );
+}
+
+/**
+ * Reads a resolved CSS custom property value so Recharts (which needs
+ * real color strings, not var() references) stays in sync as the
+ * Amber/Cyan/Green terminal theme is switched.
+ */
+function useResolvedThemeColors() {
+  const { theme } = useTheme();
+  const [colors, setColors] = useState({
+    accent: "#f5b942", textFaint: "#5c5854", border: "#2a2a2a", panel: "#111111",
+  });
+
+  useEffect(() => {
+    const style = getComputedStyle(document.documentElement);
+    setColors({
+      accent: style.getPropertyValue("--color-term-accent").trim() || "#f5b942",
+      textFaint: style.getPropertyValue("--color-term-text-faint").trim() || "#5c5854",
+      border: style.getPropertyValue("--color-term-border").trim() || "#2a2a2a",
+      panel: style.getPropertyValue("--color-term-panel").trim() || "#111111",
+    });
+  }, [theme]);
+
+  return colors;
 }
 
 export default function BacktestView({ onRun, data, loading }: Props) {
@@ -29,6 +54,7 @@ export default function BacktestView({ onRun, data, loading }: Props) {
   const [slowWindow, setSlowWindow] = useState(200);
   const [lookback, setLookback] = useState(20);
   const [entryZ, setEntryZ] = useState(2.0);
+  const themeColors = useResolvedThemeColors();
 
   function handleRun() {
     const params: Record<string, number> = strategy === "momentum"
@@ -52,8 +78,8 @@ export default function BacktestView({ onRun, data, loading }: Props) {
   return (
     <div className="space-y-6">
       {/* Strategy selector + params */}
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <p className="font-mono text-[11px] text-slate-light uppercase tracking-wide mb-4">
+      <div className="rounded-lg border border-term-border bg-term-panel p-5">
+        <p className="font-mono text-[11px] text-term-text-faint uppercase tracking-widest mb-4">
           Strategy configuration
         </p>
 
@@ -62,10 +88,10 @@ export default function BacktestView({ onRun, data, loading }: Props) {
             <button
               key={s}
               onClick={() => setStrategy(s)}
-              className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors border ${
+              className={`flex-1 py-2 px-3 rounded-lg text-sm font-mono font-medium transition-colors border ${
                 strategy === s
-                  ? "bg-purple/10 border-purple text-purple"
-                  : "border-slate-200 text-slate hover:bg-slate-50"
+                  ? "bg-term-accent/10 border-term-accent text-term-accent"
+                  : "border-term-border text-term-text-dim hover:bg-term-panel-alt"
               }`}
             >
               {s === "momentum" ? "Momentum (Golden Cross)" : "Mean Reversion (σ)"}
@@ -77,42 +103,42 @@ export default function BacktestView({ onRun, data, loading }: Props) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <div className="flex justify-between mb-1">
-                <span className="text-sm font-medium text-dark-text">Fast MA window</span>
-                <span className="font-mono text-sm text-purple font-semibold">{fastWindow}d</span>
+                <span className="text-sm font-medium text-term-text">Fast MA window</span>
+                <span className="font-mono text-sm text-term-accent font-semibold">{fastWindow}d</span>
               </div>
               <input type="range" min={10} max={100} step={5} value={fastWindow}
                 onChange={(e) => setFastWindow(+e.target.value)}
-                className="w-full h-1.5 rounded-full bg-slate-200 accent-purple cursor-pointer" />
+                className="w-full h-1.5 rounded-full bg-term-panel-alt accent-term-accent cursor-pointer" />
             </div>
             <div>
               <div className="flex justify-between mb-1">
-                <span className="text-sm font-medium text-dark-text">Slow MA window</span>
-                <span className="font-mono text-sm text-purple font-semibold">{slowWindow}d</span>
+                <span className="text-sm font-medium text-term-text">Slow MA window</span>
+                <span className="font-mono text-sm text-term-accent font-semibold">{slowWindow}d</span>
               </div>
               <input type="range" min={50} max={300} step={10} value={slowWindow}
                 onChange={(e) => setSlowWindow(+e.target.value)}
-                className="w-full h-1.5 rounded-full bg-slate-200 accent-purple cursor-pointer" />
+                className="w-full h-1.5 rounded-full bg-term-panel-alt accent-term-accent cursor-pointer" />
             </div>
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-4">
             <div>
               <div className="flex justify-between mb-1">
-                <span className="text-sm font-medium text-dark-text">Lookback window</span>
-                <span className="font-mono text-sm text-purple font-semibold">{lookback}d</span>
+                <span className="text-sm font-medium text-term-text">Lookback window</span>
+                <span className="font-mono text-sm text-term-accent font-semibold">{lookback}d</span>
               </div>
               <input type="range" min={5} max={60} step={5} value={lookback}
                 onChange={(e) => setLookback(+e.target.value)}
-                className="w-full h-1.5 rounded-full bg-slate-200 accent-purple cursor-pointer" />
+                className="w-full h-1.5 rounded-full bg-term-panel-alt accent-term-accent cursor-pointer" />
             </div>
             <div>
               <div className="flex justify-between mb-1">
-                <span className="text-sm font-medium text-dark-text">Entry threshold (σ)</span>
-                <span className="font-mono text-sm text-purple font-semibold">{entryZ.toFixed(1)}σ</span>
+                <span className="text-sm font-medium text-term-text">Entry threshold (σ)</span>
+                <span className="font-mono text-sm text-term-accent font-semibold">{entryZ.toFixed(1)}σ</span>
               </div>
               <input type="range" min={1.0} max={3.0} step={0.25} value={entryZ}
                 onChange={(e) => setEntryZ(+e.target.value)}
-                className="w-full h-1.5 rounded-full bg-slate-200 accent-purple cursor-pointer" />
+                className="w-full h-1.5 rounded-full bg-term-panel-alt accent-term-accent cursor-pointer" />
             </div>
           </div>
         )}
@@ -120,7 +146,7 @@ export default function BacktestView({ onRun, data, loading }: Props) {
         <button
           onClick={handleRun}
           disabled={loading}
-          className="mt-5 w-full py-2.5 rounded-lg bg-navy text-white text-sm font-medium hover:bg-navy-2 transition-colors disabled:opacity-50"
+          className="mt-5 w-full py-2.5 rounded-lg bg-term-accent text-term-bg font-mono font-bold uppercase tracking-wide text-sm hover:opacity-90 transition-opacity disabled:opacity-50"
         >
           {loading ? "Running backtest…" : `Run ${strategy === "momentum" ? "momentum" : "mean reversion"} backtest`}
         </button>
@@ -133,22 +159,22 @@ export default function BacktestView({ onRun, data, loading }: Props) {
             <MetricCard
               label="Strategy return"
               value={fmtPct(data.total_return)}
-              color={data.total_return >= 0 ? "text-green-600" : "text-red-500"}
+              color={data.total_return >= 0 ? "text-term-accent-2" : "text-term-danger"}
             />
             <MetricCard
               label="Buy-and-hold"
               value={fmtPct(data.buy_hold_return)}
-              color={data.buy_hold_return >= 0 ? "text-dark-text" : "text-red-500"}
+              color={data.buy_hold_return >= 0 ? "text-term-text" : "text-term-danger"}
             />
             <MetricCard
               label="Sharpe ratio"
               value={data.sharpe?.toFixed(2) ?? "—"}
-              color={data.sharpe != null && data.sharpe > 1 ? "text-green-600" : "text-dark-text"}
+              color={data.sharpe != null && data.sharpe > 1 ? "text-term-accent-2" : "text-term-text"}
             />
             <MetricCard
               label="Max drawdown"
               value={fmtPct(data.max_drawdown)}
-              color="text-red-500"
+              color="text-term-danger"
             />
             <MetricCard
               label="Win rate"
@@ -158,65 +184,82 @@ export default function BacktestView({ onRun, data, loading }: Props) {
             <MetricCard
               label="Avg win"
               value={data.avg_win != null ? fmtPct(data.avg_win) : "—"}
-              color="text-green-600"
+              color="text-term-accent-2"
             />
             <MetricCard
               label="Avg loss"
               value={data.avg_loss != null ? fmtPct(data.avg_loss) : "—"}
-              color="text-red-500"
+              color="text-term-danger"
             />
           </div>
 
           {outperformance != null && (
-            <div className={`rounded-lg px-4 py-3 text-sm ${outperformance >= 0 ? "bg-green-50 border border-green-200 text-green-700" : "bg-red-50 border border-red-200 text-red-700"}`}>
+            <div className={`rounded-lg px-4 py-3 text-sm font-mono border ${
+              outperformance >= 0
+                ? "bg-term-accent-2/10 border-term-accent-2/30 text-term-accent-2"
+                : "bg-term-danger/10 border-term-danger/30 text-term-danger"
+            }`}>
               Strategy {outperformance >= 0 ? "outperformed" : "underperformed"} buy-and-hold by{" "}
               <span className="font-semibold">{Math.abs(outperformance).toFixed(1)}pp</span> over the 5-year period.
             </div>
           )}
 
-          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="font-mono text-[11px] text-slate-light uppercase tracking-wide mb-4">
+          <div className="rounded-lg border border-term-border bg-term-panel p-5">
+            <p className="font-mono text-[11px] text-term-text-faint uppercase tracking-widest mb-4">
               P&L curve vs buy-and-hold (5 years, cumulative %)
             </p>
             <ResponsiveContainer width="100%" height={260}>
-              <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
+              <AreaChart data={chartData} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
+                <defs>
+                  <linearGradient id="strategyFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={themeColors.accent} stopOpacity={0.3} />
+                    <stop offset="95%" stopColor={themeColors.accent} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
                 <XAxis
                   dataKey="date"
-                  tick={{ fontSize: 10, fill: "#94A3B8" }}
+                  tick={{ fontSize: 10, fill: themeColors.textFaint }}
                   tickFormatter={(d: string) => d.slice(0, 7)}
                   interval={Math.floor(chartData.length / 6)}
+                  stroke={themeColors.border}
                 />
                 <YAxis
-                  tick={{ fontSize: 10, fill: "#94A3B8" }}
+                  tick={{ fontSize: 10, fill: themeColors.textFaint }}
                   tickFormatter={(v: number) => `${v > 0 ? "+" : ""}${v.toFixed(0)}%`}
                   width={52}
+                  stroke={themeColors.border}
                 />
-                <ReferenceLine y={0} stroke="#E2E8F0" />
+                <ReferenceLine y={0} stroke={themeColors.border} />
                 <Tooltip
                   formatter={(value) => {
                     const v = Number(value);
                     return [`${v > 0 ? "+" : ""}${v.toFixed(1)}%`];
                   }}
                   labelFormatter={(l) => `Date: ${l}`}
-                  contentStyle={{ fontSize: 12, borderRadius: 8 }}
+                  contentStyle={{
+                    fontSize: 12, borderRadius: 6,
+                    background: themeColors.panel, border: `1px solid ${themeColors.border}`,
+                    color: themeColors.textFaint,
+                  }}
                 />
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                <Line
+                <Legend wrapperStyle={{ fontSize: 12, color: themeColors.textFaint }} />
+                <Area
                   type="monotone" dataKey="strategy" name="Strategy"
-                  stroke="#7C3AED" dot={false} strokeWidth={2}
+                  stroke={themeColors.accent} strokeWidth={2.5}
+                  fill="url(#strategyFill)" dot={false}
                 />
                 <Line
                   type="monotone" dataKey="buyHold" name="Buy & Hold"
-                  stroke="#94A3B8" dot={false} strokeWidth={1.5} strokeDasharray="4 2"
+                  stroke={themeColors.textFaint} dot={false} strokeWidth={1.5} strokeDasharray="4 3"
                 />
-              </LineChart>
+              </AreaChart>
             </ResponsiveContainer>
           </div>
         </>
       )}
 
       {!data && !loading && (
-        <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-light">
+        <div className="rounded-lg border border-term-border bg-term-panel p-8 text-center text-sm font-mono text-term-text-faint">
           Configure the strategy above and click Run to see results.
         </div>
       )}

@@ -1,6 +1,7 @@
 """Cardinal FastAPI application."""
 from __future__ import annotations
 
+import time
 import httpx
 import yfinance as yf
 
@@ -11,10 +12,17 @@ from pydantic import ValidationError
 from cardinal.api.models import (
     AgentRequest, AgentResponse, BusquetsRequest, MessiRequest, MessiResponse,
     MessiChatRequest, MessiChatResponse,
+    FeedbackRequest, FeedbackResponse, GTEntry, AdminMetricsResponse,
+    MarketIndicesResponse, MarketMoversResponse, SectorHeatmapResponse,
+    IndexQuoteOut, MoverQuoteOut, SectorPerformanceOut, MarketSparklinePoint,
+    TapeQuoteOut, TickerTapeResponse,
     BacktestResponse, BalanceSheetResponse, CompsResponse, CurvePoint,
     DCFAssumptionsRequest, DCFResponse, IncomeStatementResponse,
     PeerMetricsOut, PriceHistoryResponse, PricePoint,
     QuantResponse, SearchResponse, SearchResult,
+)
+from cardinal.core.market_overview import (
+    fetch_market_indices, fetch_market_movers, fetch_sector_heatmap, fetch_ticker_tape,
 )
 from cardinal.agents.gemini_client import GeminiNotConfiguredError
 from cardinal.agents.xavi import build_fundamental_snapshot, run_xavi
@@ -36,13 +44,24 @@ from cardinal.data.fmp_client import (
 )
 from cardinal.data.market_data import (
     InsufficientDataError, TickerNotFoundError,
-    fetch_company_profile, fetch_financial_snapshot, fetch_price_history,
+    fetch_company_profile, fetch_financial_snapshot, fetch_price_history, get_usd_rate,
 )
+from cardinal.db import ground_truth as gt_db
+
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def _lifespan(app):  # type: ignore[type-arg]
+    gt_db.init_db()
+    yield
+
 
 app = FastAPI(
     title="Cardinal API",
     description="Multi-lens equity analysis terminal.",
-    version="0.3.0",
+    version="0.4.0",
+    lifespan=_lifespan,
 )
 
 app.add_middleware(
@@ -92,13 +111,46 @@ def get_dcf(
     projection_years: int = 5,
     wacc_override: float | None = None,
 ) -> DCFResponse:
+    # Always try to fetch the profile — needed for name, exchange, currency
     try:
-        snapshot = fetch_financial_snapshot(symbol)
         profile = fetch_company_profile(symbol)
     except TickerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+
+    currency = profile.currency or "USD"
+    usd_rate = get_usd_rate(currency)
+
+    def _usd_price(price: float) -> float | None:
+        if usd_rate is None or currency == "USD":
+            return None
+        return round(price * usd_rate, 2)
+
+    # Try full DCF — fall back to partial if fields are missing
+    try:
+        snapshot = fetch_financial_snapshot(symbol)
     except InsufficientDataError as e:
-        raise HTTPException(status_code=422, detail=str(e)) from e
+        # Return whatever we can — price, exchange, currency — mark as partial
+        import yfinance as yf
+        raw_price = 0.0
+        try:
+            info = yf.Ticker(symbol).info
+            raw_price = float(
+                info.get("currentPrice") or info.get("regularMarketPrice") or
+                info.get("previousClose") or 0.0
+            )
+        except Exception:
+            pass
+        return DCFResponse(
+            ticker=symbol.upper(),
+            company_name=profile.name,
+            exchange=profile.exchange,
+            currency=currency,
+            usd_conversion_rate=usd_rate,
+            current_price=raw_price,
+            current_price_usd=_usd_price(raw_price),
+            is_partial=True,
+            partial_reason=str(e),
+        )
 
     try:
         request = DCFAssumptionsRequest(
@@ -122,14 +174,24 @@ def get_dcf(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     return DCFResponse(
-        ticker=snapshot.ticker, company_name=profile.name,
-        wacc=result.wacc, cost_of_equity=result.cost_of_equity,
-        projected_fcf=result.projected_fcf, pv_projected_fcf=result.pv_projected_fcf,
+        ticker=snapshot.ticker,
+        company_name=profile.name,
+        exchange=profile.exchange,
+        currency=currency,
+        usd_conversion_rate=usd_rate,
+        current_price=result.current_price,
+        current_price_usd=_usd_price(result.current_price),
+        wacc=result.wacc,
+        cost_of_equity=result.cost_of_equity,
+        projected_fcf=result.projected_fcf,
+        pv_projected_fcf=result.pv_projected_fcf,
         pv_terminal_value=result.pv_terminal_value,
         terminal_value_pct_of_ev=result.terminal_value_pct_of_ev,
-        enterprise_value=result.enterprise_value, equity_value=result.equity_value,
+        enterprise_value=result.enterprise_value,
+        equity_value=result.equity_value,
         intrinsic_value_per_share=result.intrinsic_value_per_share,
-        current_price=result.current_price, premium_discount_pct=result.premium_discount_pct,
+        premium_discount_pct=result.premium_discount_pct,
+        is_partial=False,
     )
 
 
@@ -419,6 +481,32 @@ def post_xavi(request: AgentRequest) -> AgentResponse:
             pass  # comps are best-effort; agent still runs without them
 
     # 3. Build frozen snapshot string
+    # Compute alternative DCF with regression beta if available (Issue 8)
+    alt_intrinsic_value = None
+    regression_beta_for_xavi: float | None = None
+    try:
+        from cardinal.core.quant import _beta as _compute_beta
+        _ph = fetch_price_history(request.ticker, period="5y", interval="1d")
+        _bsym = benchmark_for_ticker(request.ticker)
+        _bh = fetch_price_history(_bsym, period="5y", interval="1d")
+        if not _ph.empty and not _bh.empty:
+            _sr = _ph["Close"].dropna().pct_change().dropna()
+            _br = _bh["Close"].dropna().pct_change().dropna()
+            regression_beta_for_xavi = _compute_beta(_sr, _br)
+    except Exception:
+        pass
+
+    if regression_beta_for_xavi is not None and snapshot_data.beta is not None:
+        pct_beta_diff = abs(regression_beta_for_xavi - snapshot_data.beta) / abs(snapshot_data.beta)
+        if pct_beta_diff > 0.10:
+            try:
+                from dataclasses import replace as _dc_replace
+                alt_snapshot = _dc_replace(snapshot_data, beta=regression_beta_for_xavi)
+                alt_result = run_dcf(alt_snapshot, assumptions)
+                alt_intrinsic_value = alt_result.intrinsic_value_per_share
+            except Exception:
+                pass
+
     snapshot_str = build_fundamental_snapshot(
         ticker=request.ticker.upper(),
         company_name=profile.name,
@@ -435,6 +523,17 @@ def post_xavi(request: AgentRequest) -> AgentResponse:
         equity_value=dcf_result.equity_value,
         pv_projected_fcf=dcf_result.pv_projected_fcf,
         pv_terminal_value=dcf_result.pv_terminal_value,
+        # CAPM components for auditability (Issues 2 & 4 in bug report)
+        risk_free_rate=snapshot_data.risk_free_rate,
+        beta=snapshot_data.beta,
+        market_risk_premium=snapshot_data.market_risk_premium,
+        shares_outstanding=snapshot_data.shares_outstanding,
+        # Issue 5: beta discrepancy
+        iniesta_regression_beta=regression_beta_for_xavi,
+        # Issue 8: alternative DCF + nominal FCF path
+        alt_intrinsic_value=alt_intrinsic_value,
+        nominal_projected_fcf=dcf_result.projected_fcf,
+        # Comps
         peers=peers_list or None,
         median_ev_ebitda=median_ev_ebitda,
         median_pe=median_pe,
@@ -444,15 +543,42 @@ def post_xavi(request: AgentRequest) -> AgentResponse:
         implied_ev_from_revenue=implied_ev_revenue,
     )
 
-    # 4. Call Gemini — check cache first
+    # 4. Check GT DB → cache → Gemini
     xavi_key = agent_cache.make_key(
         "xavi", request.ticker.upper(),
         request.growth_rate, request.terminal_growth_rate,
         request.projection_years, request.wacc_override,
     )
+    t_start = time.monotonic()
+
+    # GT DB first
+    gt_entry = gt_db.get_verified_entry("xavi", request.ticker.upper(), xavi_key)
+    if gt_entry:
+        elapsed = int((time.monotonic() - t_start) * 1000)
+        gt_db.log_call("xavi", request.ticker.upper(), elapsed, "gt_db")
+        return AgentResponse(
+            agent="xavi", ticker=request.ticker.upper(),
+            memo=gt_entry["memo"], news_used=False,
+            response_time_ms=elapsed, params_hash=xavi_key,
+            approval_count=gt_entry["approval_count"],
+            rejection_count=gt_entry["rejection_count"],
+            is_verified=True,
+        )
+
+    # Memory cache
     cached = agent_cache.get(xavi_key)
     if cached:
-        return AgentResponse(agent="xavi", ticker=request.ticker.upper(), memo=cached, news_used=False)
+        elapsed = int((time.monotonic() - t_start) * 1000)
+        gt_db.log_call("xavi", request.ticker.upper(), elapsed, "cache")
+        counts = gt_db.get_entry_counts("xavi", request.ticker.upper(), xavi_key)
+        return AgentResponse(
+            agent="xavi", ticker=request.ticker.upper(),
+            memo=cached, news_used=False,
+            response_time_ms=elapsed, params_hash=xavi_key,
+            approval_count=counts["approval_count"],
+            rejection_count=counts["rejection_count"],
+            is_verified=counts["is_verified"],
+        )
 
     news = fetch_news_context(request.ticker.upper(), profile.name)
     try:
@@ -466,8 +592,18 @@ def post_xavi(request: AgentRequest) -> AgentResponse:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Xavi agent error: {e}") from e
 
+    elapsed = int((time.monotonic() - t_start) * 1000)
     agent_cache.set(xavi_key, memo)
-    return AgentResponse(agent="xavi", ticker=request.ticker.upper(), memo=memo, news_used=news is not None)
+    gt_db.upsert_entry("xavi", request.ticker.upper(), xavi_key, memo, elapsed)
+    gt_db.log_call("xavi", request.ticker.upper(), elapsed, "gemini")
+
+    return AgentResponse(
+        agent="xavi", ticker=request.ticker.upper(),
+        memo=memo, news_used=news is not None,
+        response_time_ms=elapsed, params_hash=xavi_key,
+        thought_process=snapshot_str,
+        approval_count=0, rejection_count=0, is_verified=False,
+    )
 
 
 @app.post("/agent/iniesta", response_model=AgentResponse)
@@ -524,9 +660,33 @@ def post_iniesta(request: AgentRequest) -> AgentResponse:
 
     # Iniesta cache key — depends only on ticker (no user-tunable params)
     iniesta_key = agent_cache.make_key("iniesta", request.ticker.upper())
+    t_start = time.monotonic()
+
+    gt_entry = gt_db.get_verified_entry("iniesta", request.ticker.upper(), iniesta_key)
+    if gt_entry:
+        elapsed = int((time.monotonic() - t_start) * 1000)
+        gt_db.log_call("iniesta", request.ticker.upper(), elapsed, "gt_db")
+        return AgentResponse(
+            agent="iniesta", ticker=request.ticker.upper(),
+            memo=gt_entry["memo"], news_used=False,
+            response_time_ms=elapsed, params_hash=iniesta_key,
+            approval_count=gt_entry["approval_count"],
+            rejection_count=gt_entry["rejection_count"], is_verified=True,
+        )
+
     cached = agent_cache.get(iniesta_key)
     if cached:
-        return AgentResponse(agent="iniesta", ticker=request.ticker.upper(), memo=cached, news_used=False)
+        elapsed = int((time.monotonic() - t_start) * 1000)
+        gt_db.log_call("iniesta", request.ticker.upper(), elapsed, "cache")
+        counts = gt_db.get_entry_counts("iniesta", request.ticker.upper(), iniesta_key)
+        return AgentResponse(
+            agent="iniesta", ticker=request.ticker.upper(),
+            memo=cached, news_used=False,
+            response_time_ms=elapsed, params_hash=iniesta_key,
+            approval_count=counts["approval_count"],
+            rejection_count=counts["rejection_count"],
+            is_verified=counts["is_verified"],
+        )
 
     news = fetch_news_context(request.ticker.upper())
     try:
@@ -540,8 +700,18 @@ def post_iniesta(request: AgentRequest) -> AgentResponse:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Iniesta agent error: {e}") from e
 
+    elapsed = int((time.monotonic() - t_start) * 1000)
     agent_cache.set(iniesta_key, memo)
-    return AgentResponse(agent="iniesta", ticker=request.ticker.upper(), memo=memo, news_used=news is not None)
+    gt_db.upsert_entry("iniesta", request.ticker.upper(), iniesta_key, memo, elapsed)
+    gt_db.log_call("iniesta", request.ticker.upper(), elapsed, "gemini")
+
+    return AgentResponse(
+        agent="iniesta", ticker=request.ticker.upper(),
+        memo=memo, news_used=news is not None,
+        response_time_ms=elapsed, params_hash=iniesta_key,
+        thought_process=snapshot_str,
+        approval_count=0, rejection_count=0, is_verified=False,
+    )
 
 
 @app.post("/agent/busquets", response_model=AgentResponse)
@@ -607,9 +777,33 @@ def post_busquets(request: BusquetsRequest) -> AgentResponse:
         request.fast_window, request.slow_window,
         request.lookback, request.entry_z, request.commission,
     )
+    t_start = time.monotonic()
+
+    gt_entry = gt_db.get_verified_entry("busquets", request.ticker.upper(), busquets_key)
+    if gt_entry:
+        elapsed = int((time.monotonic() - t_start) * 1000)
+        gt_db.log_call("busquets", request.ticker.upper(), elapsed, "gt_db")
+        return AgentResponse(
+            agent="busquets", ticker=request.ticker.upper(),
+            memo=gt_entry["memo"], news_used=False,
+            response_time_ms=elapsed, params_hash=busquets_key,
+            approval_count=gt_entry["approval_count"],
+            rejection_count=gt_entry["rejection_count"], is_verified=True,
+        )
+
     cached = agent_cache.get(busquets_key)
     if cached:
-        return AgentResponse(agent="busquets", ticker=request.ticker.upper(), memo=cached, news_used=False)
+        elapsed = int((time.monotonic() - t_start) * 1000)
+        gt_db.log_call("busquets", request.ticker.upper(), elapsed, "cache")
+        counts = gt_db.get_entry_counts("busquets", request.ticker.upper(), busquets_key)
+        return AgentResponse(
+            agent="busquets", ticker=request.ticker.upper(),
+            memo=cached, news_used=False,
+            response_time_ms=elapsed, params_hash=busquets_key,
+            approval_count=counts["approval_count"],
+            rejection_count=counts["rejection_count"],
+            is_verified=counts["is_verified"],
+        )
 
     news = fetch_news_context(request.ticker.upper())
     try:
@@ -623,8 +817,18 @@ def post_busquets(request: BusquetsRequest) -> AgentResponse:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Busquets agent error: {e}") from e
 
+    elapsed = int((time.monotonic() - t_start) * 1000)
     agent_cache.set(busquets_key, memo)
-    return AgentResponse(agent="busquets", ticker=request.ticker.upper(), memo=memo, news_used=news is not None)
+    gt_db.upsert_entry("busquets", request.ticker.upper(), busquets_key, memo, elapsed)
+    gt_db.log_call("busquets", request.ticker.upper(), elapsed, "gemini")
+
+    return AgentResponse(
+        agent="busquets", ticker=request.ticker.upper(),
+        memo=memo, news_used=news is not None,
+        response_time_ms=elapsed, params_hash=busquets_key,
+        thought_process=snapshot_str,
+        approval_count=0, rejection_count=0, is_verified=False,
+    )
 
 
 @app.post("/agent/messi", response_model=MessiResponse)
@@ -662,8 +866,9 @@ def post_messi(request: MessiRequest) -> MessiResponse:
     if busquets_memo:
         cached_agents.append("busquets")
 
+    t_messi_start = time.monotonic()
+
     # Fetch news once upfront — passed only to agents that need a fresh run
-    # Cached agents already have news baked into their memo from the first run
     needs_fresh = not (xavi_memo and iniesta_memo and busquets_memo)
     news = fetch_news_context(ticker) if needs_fresh else None
     news_used = news is not None
@@ -688,6 +893,21 @@ def post_messi(request: MessiRequest) -> MessiResponse:
             dcf_result = run_dcf(snapshot_data, dcf_assumptions)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+
+        # Issue 5: compute regression beta upfront so Xavi can flag methodology discrepancy
+        # This is a pure computation (no Gemini call) — cheap to do before building the snapshot
+        regression_beta_for_xavi: float | None = None
+        try:
+            _price_hist = fetch_price_history(request.ticker, period="5y", interval="1d")
+            _bench_sym = benchmark_for_ticker(request.ticker)
+            _bench_hist = fetch_price_history(_bench_sym, period="5y", interval="1d")
+            if not _price_hist.empty and not _bench_hist.empty:
+                from cardinal.core.quant import _beta as _compute_beta
+                _stock_ret = _price_hist["Close"].dropna().pct_change().dropna()
+                _bench_ret = _bench_hist["Close"].dropna().pct_change().dropna()
+                regression_beta_for_xavi = _compute_beta(_stock_ret, _bench_ret)
+        except Exception:
+            pass  # regression beta is best-effort — Xavi snapshot still works without it
 
         peers_list: list[dict] = []
         median_ev_ebitda = median_pe = median_ev_revenue = median_ps = None
@@ -720,6 +940,19 @@ def post_messi(request: MessiRequest) -> MessiResponse:
             except Exception:
                 pass
 
+        # Issue 8: compute alternative DCF with regression beta to report actual value delta
+        alt_intrinsic_for_xavi: float | None = None
+        if regression_beta_for_xavi is not None and snapshot_data.beta is not None:
+            pct_diff_beta = abs(regression_beta_for_xavi - snapshot_data.beta) / abs(snapshot_data.beta)
+            if pct_diff_beta > 0.10:
+                try:
+                    from dataclasses import replace as _dc_replace
+                    _alt_snap = _dc_replace(snapshot_data, beta=regression_beta_for_xavi)
+                    _alt_res = run_dcf(_alt_snap, dcf_assumptions)
+                    alt_intrinsic_for_xavi = _alt_res.intrinsic_value_per_share
+                except Exception:
+                    pass
+
         xavi_snapshot = build_fundamental_snapshot(
             ticker=ticker, company_name=profile.name,
             current_price=dcf_result.current_price,
@@ -734,6 +967,13 @@ def post_messi(request: MessiRequest) -> MessiResponse:
             equity_value=dcf_result.equity_value,
             pv_projected_fcf=dcf_result.pv_projected_fcf,
             pv_terminal_value=dcf_result.pv_terminal_value,
+            risk_free_rate=snapshot_data.risk_free_rate,
+            beta=snapshot_data.beta,
+            market_risk_premium=snapshot_data.market_risk_premium,
+            shares_outstanding=snapshot_data.shares_outstanding,
+            iniesta_regression_beta=regression_beta_for_xavi,
+            alt_intrinsic_value=alt_intrinsic_for_xavi,
+            nominal_projected_fcf=dcf_result.projected_fcf,
             peers=peers_list or None,
             median_ev_ebitda=median_ev_ebitda, median_pe=median_pe,
             median_ev_revenue=median_ev_revenue, median_ps=median_ps,
@@ -822,18 +1062,31 @@ def post_messi(request: MessiRequest) -> MessiResponse:
                 raise HTTPException(status_code=500, detail=f"Busquets agent error: {e}") from e
 
     # ── Step 3: Messi synthesises ─────────────────────────────────────────────
-    try:
-        synthesis = run_messi(
-            ticker=ticker,
-            xavi_memo=xavi_memo,
-            iniesta_memo=iniesta_memo,
-            busquets_memo=busquets_memo,
-            user_question=request.user_question,
-        )
-    except GeminiNotConfiguredError as e:
-        raise HTTPException(status_code=503, detail=str(e)) from e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Messi agent error: {e}") from e
+    # Cache synthesis keyed to the three memo hashes — same memos → same verdict
+    synthesis_key = agent_cache.make_key("messi_synthesis", xavi_key, iniesta_key, busquets_key)
+    cached_synthesis = agent_cache.get(synthesis_key)
+
+    if cached_synthesis:
+        synthesis = cached_synthesis
+        cached_agents.append("synthesis")
+    else:
+        try:
+            synthesis = run_messi(
+                ticker=ticker,
+                xavi_memo=xavi_memo,
+                iniesta_memo=iniesta_memo,
+                busquets_memo=busquets_memo,
+                user_question=request.user_question,
+            )
+            agent_cache.set(synthesis_key, synthesis)
+        except GeminiNotConfiguredError as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Messi agent error: {e}") from e
+
+    total_elapsed = int((time.monotonic() - t_messi_start) * 1000)
+    gt_db.log_call("messi", ticker, total_elapsed, "gemini" if "synthesis" not in cached_agents else "cache")
+    synthesis_counts = gt_db.get_entry_counts("messi", ticker, synthesis_key)
 
     return MessiResponse(
         ticker=ticker,
@@ -843,6 +1096,11 @@ def post_messi(request: MessiRequest) -> MessiResponse:
         synthesis_memo=synthesis,
         news_used=news_used,
         cached_agents=cached_agents,
+        response_time_ms=total_elapsed,
+        synthesis_params_hash=synthesis_key,
+        synthesis_approval_count=synthesis_counts["approval_count"],
+        synthesis_rejection_count=synthesis_counts["rejection_count"],
+        synthesis_is_verified=synthesis_counts["is_verified"],
     )
 
 
@@ -879,3 +1137,129 @@ def post_messi_chat(request: MessiChatRequest) -> MessiChatResponse:
         raise HTTPException(status_code=500, detail=f"Messi chat error: {e}") from e
 
     return MessiChatResponse(reply=reply, news_used=news is not None)
+
+
+# ── Feedback & Admin ──────────────────────────────────────────────────────────
+
+@app.post("/feedback", response_model=FeedbackResponse)
+def post_feedback(request: FeedbackRequest) -> FeedbackResponse:
+    """Submit a positive or negative vote on an agent memo."""
+    if request.vote not in ("positive", "negative"):
+        raise HTTPException(status_code=400, detail="vote must be 'positive' or 'negative'")
+    counts = gt_db.add_feedback(
+        agent=request.agent,
+        ticker=request.ticker,
+        params_hash=request.params_hash,
+        vote=request.vote,
+        comment=request.comment,
+    )
+    verified = counts["is_verified"]
+    threshold = counts["threshold"]
+    approvals = counts["approval_count"]
+    msg = (
+        f"Verified! This response is now in the Ground Truth DB."
+        if verified else
+        f"{approvals}/{threshold} approvals — {threshold - approvals} more to verify."
+    )
+    return FeedbackResponse(
+        approval_count=approvals,
+        rejection_count=counts["rejection_count"],
+        is_verified=verified,
+        threshold=threshold,
+        message=msg,
+    )
+
+
+@app.get("/admin/metrics", response_model=AdminMetricsResponse)
+def get_admin_metrics() -> AdminMetricsResponse:
+    """Aggregate metrics for the admin dashboard."""
+    return AdminMetricsResponse(**gt_db.get_metrics())
+
+
+@app.get("/admin/ground-truth")
+def list_ground_truth(
+    agent: str | None = None,
+    ticker: str | None = None,
+    verified_only: bool = False,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict]:
+    """List Ground Truth DB entries for admin dashboard."""
+    return gt_db.list_entries(
+        limit=limit, offset=offset,
+        agent=agent, ticker=ticker,
+        verified_only=verified_only,
+    )
+
+
+@app.delete("/admin/ground-truth/{entry_id}")
+def delete_ground_truth(entry_id: int) -> dict:
+    """Remove a GT entry from the database."""
+    gt_db.delete_entry(entry_id)
+    return {"deleted": entry_id}
+
+
+# ── Market Overview (homepage widgets) ──────────────────────────────────────
+
+def _sparkline_out(points) -> list[MarketSparklinePoint]:
+    return [MarketSparklinePoint(date=p.date, value=p.value) for p in points]
+
+
+@app.get("/market/indices", response_model=MarketIndicesResponse)
+def get_market_indices() -> MarketIndicesResponse:
+    """S&P 500, NIFTY 50, DAX — current value, change, 1mo daily sparkline."""
+    indices = fetch_market_indices()
+    return MarketIndicesResponse(indices=[
+        IndexQuoteOut(
+            symbol=i.symbol, name=i.name, value=i.value,
+            change=i.change, change_pct=i.change_pct,
+            sparkline=_sparkline_out(i.sparkline),
+        )
+        for i in indices
+    ])
+
+
+@app.get("/market/movers", response_model=MarketMoversResponse)
+def get_market_movers(limit: int = 5) -> MarketMoversResponse:
+    """Top gainers and losers from a fixed large-cap universe."""
+    gainers, losers = fetch_market_movers(limit=limit)
+    return MarketMoversResponse(
+        gainers=[
+            MoverQuoteOut(
+                ticker=m.ticker, name=m.name, price=m.price,
+                change_pct=m.change_pct, sparkline=_sparkline_out(m.sparkline),
+            )
+            for m in gainers
+        ],
+        losers=[
+            MoverQuoteOut(
+                ticker=m.ticker, name=m.name, price=m.price,
+                change_pct=m.change_pct, sparkline=_sparkline_out(m.sparkline),
+            )
+            for m in losers
+        ],
+    )
+
+
+@app.get("/market/sectors", response_model=SectorHeatmapResponse)
+def get_sector_heatmap() -> SectorHeatmapResponse:
+    """10 GICS sector proxies (SPDR sector ETFs) — day-over-day % change."""
+    sectors = fetch_sector_heatmap()
+    return SectorHeatmapResponse(sectors=[
+        SectorPerformanceOut(name=s.name, etf_proxy=s.etf_proxy, change_pct=s.change_pct)
+        for s in sectors
+    ])
+
+
+@app.get("/market/ticker-tape", response_model=TickerTapeResponse)
+def get_ticker_tape() -> TickerTapeResponse:
+    """
+    Fixed-order watchlist for the header marquee. Unlike /market/movers,
+    this is NOT re-ranked by performance — tickers stay in stable order
+    across refreshes, matching real terminal tape behaviour.
+    """
+    quotes = fetch_ticker_tape()
+    return TickerTapeResponse(quotes=[
+        TapeQuoteOut(ticker=q.ticker, name=q.name, price=q.price, change_pct=q.change_pct)
+        for q in quotes
+    ])

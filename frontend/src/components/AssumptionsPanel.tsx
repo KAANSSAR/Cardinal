@@ -14,15 +14,15 @@ function SliderRow({ label, sublabel, min, max, step, value, display, onChange }
     <div className="py-3">
       <div className="flex justify-between items-baseline mb-1.5">
         <div>
-          <span className="text-sm font-medium text-dark-text">{label}</span>
-          {sublabel && <span className="ml-1.5 text-xs text-slate-light">{sublabel}</span>}
+          <span className="text-sm font-medium text-term-text">{label}</span>
+          {sublabel && <span className="ml-1.5 text-xs text-term-text-faint">{sublabel}</span>}
         </div>
-        <span className="font-mono text-sm font-semibold text-teal">{display}</span>
+        <span className="font-mono text-sm font-semibold text-term-accent">{display}</span>
       </div>
       <input
         type="range" min={min} max={max} step={step} value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
-        className="w-full h-1.5 rounded-full bg-slate-200 accent-teal cursor-pointer"
+        className="w-full h-1.5 rounded-full bg-term-panel-alt accent-term-accent cursor-pointer"
       />
     </div>
   );
@@ -32,13 +32,13 @@ export default function AssumptionsPanel({ assumptions, onChange, loading }: Pro
   const fmt = (v: number) => `${(v * 100).toFixed(1)}%`;
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="rounded-lg border border-term-border bg-term-panel p-5">
       <div className="flex items-center justify-between mb-2">
-        <p className="font-mono text-[11px] text-slate-light uppercase tracking-wide">Model assumptions</p>
-        {loading && <span className="text-xs text-teal animate-pulse">Recalculating…</span>}
+        <p className="font-mono text-[11px] text-term-text-faint uppercase tracking-widest">Model assumptions</p>
+        {loading && <span className="text-xs font-mono text-term-accent animate-pulse">Recalculating…</span>}
       </div>
 
-      <div className="divide-y divide-slate-100">
+      <div className="divide-y divide-term-border-faint">
         <SliderRow
           label="FCF Growth Rate" sublabel="projection period"
           min={-0.1} max={0.3} step={0.005} value={assumptions.growth_rate}
@@ -66,7 +66,7 @@ export default function AssumptionsPanel({ assumptions, onChange, loading }: Pro
       </div>
 
       <button
-        className="mt-3 text-xs text-slate hover:text-teal transition-colors"
+        className="mt-3 text-xs font-mono text-term-text-faint hover:text-term-accent transition-colors uppercase tracking-wide"
         onClick={() => onChange({ growth_rate: 0.08, terminal_growth_rate: 0.035, projection_years: 5, wacc_override: undefined })}
       >
         Reset to defaults

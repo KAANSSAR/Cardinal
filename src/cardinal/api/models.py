@@ -12,17 +12,27 @@ class DCFAssumptionsRequest(BaseModel):
 class DCFResponse(BaseModel):
     ticker: str
     company_name: str
-    wacc: float
-    cost_of_equity: float
-    projected_fcf: list[float]
-    pv_projected_fcf: list[float]
-    pv_terminal_value: float
-    terminal_value_pct_of_ev: float
-    enterprise_value: float
-    equity_value: float
-    intrinsic_value_per_share: float
-    current_price: float
-    premium_discount_pct: float
+    exchange: str | None = None
+    currency: str = "USD"
+    usd_conversion_rate: float | None = None   # 1 {currency} = X USD
+    current_price_usd: float | None = None     # price converted to USD
+
+    # DCF outputs — None when partial (insufficient data)
+    wacc: float | None = None
+    cost_of_equity: float | None = None
+    projected_fcf: list[float] = []
+    pv_projected_fcf: list[float] = []
+    pv_terminal_value: float | None = None
+    terminal_value_pct_of_ev: float | None = None
+    enterprise_value: float | None = None
+    equity_value: float | None = None
+    intrinsic_value_per_share: float | None = None
+    current_price: float = 0.0
+    premium_discount_pct: float | None = None
+
+    # Partial response flag
+    is_partial: bool = False
+    partial_reason: str | None = None
 
 
 class PricePoint(BaseModel):
@@ -205,6 +215,11 @@ class MessiResponse(BaseModel):
     synthesis_memo: str   # Messi's final verdict
     news_used: bool
     cached_agents: list[str]  # which agents were served from cache e.g. ["iniesta"]
+    response_time_ms: int = 0
+    synthesis_params_hash: str = ""
+    synthesis_approval_count: int = 0
+    synthesis_rejection_count: int = 0
+    synthesis_is_verified: bool = False
 
 
 class AgentResponse(BaseModel):
@@ -212,7 +227,112 @@ class AgentResponse(BaseModel):
     ticker: str
     memo: str           # the agent's full text output
     news_used: bool     # whether Tavily news context was included
+    response_time_ms: int = 0
+    params_hash: str = ""           # for frontend feedback submission
+    thought_process: str | None = None  # data snapshot sent to agent
+    approval_count: int = 0
+    rejection_count: int = 0
+    is_verified: bool = False
 
 
 class ErrorResponse(BaseModel):
     detail: str
+
+class FeedbackRequest(BaseModel):
+    ticker: str
+    agent: str
+    params_hash: str
+    vote: str           # "positive" or "negative"
+    comment: str | None = None
+
+
+class FeedbackResponse(BaseModel):
+    approval_count: int
+    rejection_count: int
+    is_verified: bool
+    threshold: int
+    message: str
+
+
+class GTEntry(BaseModel):
+    id: int
+    ticker: str
+    agent: str
+    params_hash: str
+    verdict: str | None
+    approval_count: int
+    rejection_count: int
+    is_verified: bool
+    response_time_ms: int | None
+    created_at: str
+    updated_at: str
+
+
+class AdminMetricsResponse(BaseModel):
+    total_calls: int
+    gt_entries: int
+    verified: int
+    total_feedback: int
+    positive: int
+    approval_rate: float
+    gemini_calls: int
+    cache_hits: int
+    gt_hits: int
+    agent_stats: list[dict]
+    recent_calls: list[dict]
+    recent_feedback: list[dict]
+    approval_threshold: int
+
+
+# ── Market overview (homepage widgets) ──────────────────────────────────────
+
+class MarketSparklinePoint(BaseModel):
+    date: str
+    value: float
+
+
+class IndexQuoteOut(BaseModel):
+    symbol: str
+    name: str
+    value: float
+    change: float
+    change_pct: float
+    sparkline: list[MarketSparklinePoint]
+
+
+class MarketIndicesResponse(BaseModel):
+    indices: list[IndexQuoteOut]
+
+
+class MoverQuoteOut(BaseModel):
+    ticker: str
+    name: str
+    price: float
+    change_pct: float
+    sparkline: list[MarketSparklinePoint]
+
+
+class MarketMoversResponse(BaseModel):
+    gainers: list[MoverQuoteOut]
+    losers: list[MoverQuoteOut]
+
+
+class SectorPerformanceOut(BaseModel):
+    name: str
+    etf_proxy: str
+    change_pct: float
+
+
+class SectorHeatmapResponse(BaseModel):
+    sectors: list[SectorPerformanceOut]
+
+
+class TapeQuoteOut(BaseModel):
+    ticker: str
+    name: str
+    price: float
+    change_pct: float
+
+
+class TickerTapeResponse(BaseModel):
+    quotes: list[TapeQuoteOut]

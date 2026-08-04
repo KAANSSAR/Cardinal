@@ -9,6 +9,12 @@ from __future__ import annotations
 
 from google import genai
 from google.genai import types
+from tenacity import (
+    retry,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from cardinal.config import settings
 
@@ -17,6 +23,18 @@ class GeminiNotConfiguredError(Exception):
     """Raised when GEMINI_API_KEY is not set in the environment."""
 
 
+def _is_retryable(exc: BaseException) -> bool:
+    """Retry on 503 (UNAVAILABLE) and 429 (RESOURCE_EXHAUSTED) only."""
+    msg = str(exc)
+    return "503" in msg or "UNAVAILABLE" in msg or "429" in msg or "RESOURCE_EXHAUSTED" in msg
+
+
+@retry(
+    retry=retry_if_exception(_is_retryable),
+    wait=wait_exponential(multiplier=1, min=2, max=15),
+    stop=stop_after_attempt(4),
+    reraise=True,
+)
 def generate(
     prompt: str,
     system_prompt: str,
@@ -25,8 +43,8 @@ def generate(
 ) -> str:
     """
     Call Gemini 3.5 Flash with a system prompt and user prompt.
-    Thinking mode is disabled — we want a direct, structured response
-    rather than chain-of-thought tokens consuming the output budget.
+    Automatically retries up to 4 times on 503/429 with exponential backoff.
+    Thinking mode disabled — all tokens go to the actual response.
     """
     if not settings.gemini_configured:
         raise GeminiNotConfiguredError(

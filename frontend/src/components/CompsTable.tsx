@@ -13,25 +13,25 @@ function fmtCap(v: number | null): string {
 }
 
 function Cell({ value, median }: { value: number | null; median: number | null }) {
-  if (value == null) return <span className="text-slate-light">—</span>;
+  if (value == null) return <span className="text-term-text-faint">—</span>;
   const diff = median != null ? (value - median) / median : null;
   const color =
-    diff == null ? "text-dark-text"
-    : diff > 0.1 ? "text-red-500"
-    : diff < -0.1 ? "text-green-600"
-    : "text-dark-text";
+    diff == null ? "text-term-text"
+    : diff > 0.1 ? "text-term-danger"
+    : diff < -0.1 ? "text-term-accent-2"
+    : "text-term-text";
   return <span className={`font-mono ${color}`}>{value.toFixed(1)}×</span>;
 }
 
 export default function CompsTable({ data }: { data: CompsResponse }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <p className="font-mono text-[11px] text-slate-light uppercase tracking-wide mb-4">
+    <div className="rounded-lg border border-term-border bg-term-panel p-5">
+      <p className="font-mono text-[11px] text-term-text-faint uppercase tracking-widest mb-4">
         Comparable companies
       </p>
 
       {data.peers.length === 0 ? (
-        <p className="text-sm text-slate-light text-center py-4">
+        <p className="text-sm text-term-text-faint text-center py-4">
           No peer data available for this ticker.
         </p>
       ) : (
@@ -39,7 +39,7 @@ export default function CompsTable({ data }: { data: CompsResponse }) {
           <div className="overflow-x-auto">
             <table className="w-full text-sm border-collapse">
               <thead>
-                <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-dark">
+                <tr className="border-b border-term-border-faint text-[11px] font-mono uppercase tracking-wide text-term-text-faint">
                   <th className="text-left py-2.5 pr-4 font-medium">Company</th>
                   <th className="text-right py-2.5 px-2 font-medium">Mkt Cap</th>
                   <th className="text-right py-2.5 px-2 font-medium">EV/EBITDA</th>
@@ -52,22 +52,22 @@ export default function CompsTable({ data }: { data: CompsResponse }) {
                 {data.peers.map((peer) => (
                   <tr
                     key={peer.ticker}
-                    className="border-b border-slate-50 hover:bg-slate-50 transition-colors group"
+                    className="border-b border-term-border-faint hover:bg-term-panel-alt transition-colors group"
                   >
                     <td className="py-2.5 pr-4">
                       <Link
                         to={`/ticker/${peer.ticker}`}
                         className="flex flex-col gap-0.5 w-fit"
                       >
-                        <span className="font-mono text-xs font-semibold text-teal group-hover:underline">
+                        <span className="font-mono text-xs font-semibold text-term-accent group-hover:underline">
                           {peer.ticker}
                         </span>
-                        <span className="text-[11px] text-slate-light truncate max-w-[120px]">
+                        <span className="text-[11px] text-term-text-faint truncate max-w-[120px]">
                           {peer.name}
                         </span>
                       </Link>
                     </td>
-                    <td className="text-right py-2.5 px-2 font-mono text-xs text-dark-text">
+                    <td className="text-right py-2.5 px-2 font-mono text-xs text-term-text-dim">
                       {fmtCap(peer.market_cap)}
                     </td>
                     <td className="text-right py-2.5 px-2">
@@ -86,21 +86,21 @@ export default function CompsTable({ data }: { data: CompsResponse }) {
                 ))}
 
                 {/* Median row */}
-                <tr className="border-t-2 border-slate-200 bg-slate-50">
-                  <td className="py-2.5 pr-4 text-[11px] font-semibold text-slate uppercase tracking-wide">
+                <tr className="border-t-2 border-term-border bg-term-panel-alt">
+                  <td className="py-2.5 pr-4 text-[11px] font-mono font-semibold text-term-text-dim uppercase tracking-wide">
                     Peer median
                   </td>
-                  <td className="text-right py-2.5 px-2 text-slate text-xs">—</td>
-                  <td className="text-right py-2.5 px-2 font-mono text-sm font-semibold text-teal">
+                  <td className="text-right py-2.5 px-2 text-term-text-faint text-xs">—</td>
+                  <td className="text-right py-2.5 px-2 font-mono text-sm font-semibold text-term-accent">
                     {fmt(data.median_ev_ebitda)}
                   </td>
-                  <td className="text-right py-2.5 px-2 font-mono text-sm font-semibold text-teal">
+                  <td className="text-right py-2.5 px-2 font-mono text-sm font-semibold text-term-accent">
                     {fmt(data.median_pe)}
                   </td>
-                  <td className="text-right py-2.5 px-2 font-mono text-sm font-semibold text-teal">
+                  <td className="text-right py-2.5 px-2 font-mono text-sm font-semibold text-term-accent">
                     {fmt(data.median_ev_revenue)}
                   </td>
-                  <td className="text-right py-2.5 pl-2 font-mono text-sm font-semibold text-teal">
+                  <td className="text-right py-2.5 pl-2 font-mono text-sm font-semibold text-term-accent">
                     {fmt(data.median_ps)}
                   </td>
                 </tr>
@@ -110,19 +110,19 @@ export default function CompsTable({ data }: { data: CompsResponse }) {
 
           {/* Implied EV callouts */}
           {(data.implied_ev_from_ebitda != null || data.implied_ev_from_revenue != null) && (
-            <div className="mt-4 pt-4 border-t border-slate-100 grid grid-cols-2 gap-4">
+            <div className="mt-4 pt-4 border-t border-term-border-faint grid grid-cols-2 gap-4">
               {data.implied_ev_from_ebitda != null && (
                 <div>
-                  <p className="text-[11px] text-slate-light">Comps-implied EV (EV/EBITDA)</p>
-                  <p className="font-mono text-sm font-semibold text-dark-text">
+                  <p className="text-[11px] font-mono text-term-text-faint uppercase tracking-wide">Comps-implied EV (EV/EBITDA)</p>
+                  <p className="font-mono text-sm font-semibold text-term-text">
                     {fmtCap(data.implied_ev_from_ebitda)}
                   </p>
                 </div>
               )}
               {data.implied_ev_from_revenue != null && (
                 <div>
-                  <p className="text-[11px] text-slate-light">Comps-implied EV (EV/Revenue)</p>
-                  <p className="font-mono text-sm font-semibold text-dark-text">
+                  <p className="text-[11px] font-mono text-term-text-faint uppercase tracking-wide">Comps-implied EV (EV/Revenue)</p>
+                  <p className="font-mono text-sm font-semibold text-term-text">
                     {fmtCap(data.implied_ev_from_revenue)}
                   </p>
                 </div>

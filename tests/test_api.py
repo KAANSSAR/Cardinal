@@ -46,13 +46,15 @@ def test_health_check():
 class TestDCFEndpoint:
     def test_returns_200_with_valid_ticker(self):
         with patch("cardinal.api.main.fetch_financial_snapshot", return_value=FAKE_SNAPSHOT), \
-             patch("cardinal.api.main.fetch_company_profile", return_value=FAKE_PROFILE):
+             patch("cardinal.api.main.fetch_company_profile", return_value=FAKE_PROFILE), \
+             patch("cardinal.api.main.get_usd_rate", return_value=1.0):
             response = client.get("/ticker/AAPL/dcf")
         assert response.status_code == 200
 
     def test_response_contains_expected_fields(self):
         with patch("cardinal.api.main.fetch_financial_snapshot", return_value=FAKE_SNAPSHOT), \
-             patch("cardinal.api.main.fetch_company_profile", return_value=FAKE_PROFILE):
+             patch("cardinal.api.main.fetch_company_profile", return_value=FAKE_PROFILE), \
+             patch("cardinal.api.main.get_usd_rate", return_value=1.0):
             response = client.get("/ticker/AAPL/dcf")
         body = response.json()
         expected_keys = {
@@ -67,30 +69,35 @@ class TestDCFEndpoint:
 
     def test_query_params_change_output(self):
         with patch("cardinal.api.main.fetch_financial_snapshot", return_value=FAKE_SNAPSHOT), \
-             patch("cardinal.api.main.fetch_company_profile", return_value=FAKE_PROFILE):
+             patch("cardinal.api.main.fetch_company_profile", return_value=FAKE_PROFILE), \
+             patch("cardinal.api.main.get_usd_rate", return_value=1.0):
             low = client.get("/ticker/AAPL/dcf", params={"wacc_override": 0.08, "terminal_growth_rate": 0.03})
             high = client.get("/ticker/AAPL/dcf", params={"wacc_override": 0.14, "terminal_growth_rate": 0.03})
         assert low.json()["intrinsic_value_per_share"] > high.json()["intrinsic_value_per_share"]
 
     def test_404_when_ticker_not_found(self):
-        with patch(
-            "cardinal.api.main.fetch_financial_snapshot",
-            side_effect=TickerNotFoundError("No data for 'ZZZZZ'"),
-        ):
+        with patch("cardinal.api.main.fetch_company_profile",
+                   side_effect=TickerNotFoundError("No data for 'ZZZZZ'")):
             response = client.get("/ticker/ZZZZZ/dcf")
         assert response.status_code == 404
 
     def test_422_when_insufficient_data(self):
-        with patch(
-            "cardinal.api.main.fetch_financial_snapshot",
-            side_effect=InsufficientDataError("Missing free_cash_flow"),
-        ):
+        # With the new partial-response behaviour, InsufficientDataError no longer
+        # returns 422 — instead it returns a 200 with is_partial=True and a partial_reason.
+        with patch("cardinal.api.main.fetch_company_profile", return_value=FAKE_PROFILE), \
+             patch("cardinal.api.main.fetch_financial_snapshot",
+                   side_effect=InsufficientDataError("Missing free_cash_flow")), \
+             patch("cardinal.api.main.get_usd_rate", return_value=1.0):
             response = client.get("/ticker/WEIRDTICKER/dcf")
-        assert response.status_code == 422
+        assert response.status_code == 200
+        body = response.json()
+        assert body["is_partial"] is True
+        assert "free_cash_flow" in body["partial_reason"]
 
     def test_400_when_wacc_not_greater_than_terminal_growth(self):
         with patch("cardinal.api.main.fetch_financial_snapshot", return_value=FAKE_SNAPSHOT), \
-             patch("cardinal.api.main.fetch_company_profile", return_value=FAKE_PROFILE):
+             patch("cardinal.api.main.fetch_company_profile", return_value=FAKE_PROFILE), \
+             patch("cardinal.api.main.get_usd_rate", return_value=1.0):
             response = client.get(
                 "/ticker/AAPL/dcf",
                 params={"wacc_override": 0.03, "terminal_growth_rate": 0.03},
@@ -99,7 +106,8 @@ class TestDCFEndpoint:
 
     def test_projection_years_out_of_range_rejected_by_pydantic(self):
         with patch("cardinal.api.main.fetch_financial_snapshot", return_value=FAKE_SNAPSHOT), \
-             patch("cardinal.api.main.fetch_company_profile", return_value=FAKE_PROFILE):
+             patch("cardinal.api.main.fetch_company_profile", return_value=FAKE_PROFILE), \
+             patch("cardinal.api.main.get_usd_rate", return_value=1.0):
             response = client.get("/ticker/AAPL/dcf", params={"projection_years": 50})
         # FastAPI/pydantic should reject this before it ever reaches run_dcf
         assert response.status_code == 422
@@ -107,7 +115,8 @@ class TestDCFEndpoint:
     @pytest.mark.parametrize("growth_rate", [-0.1, 0.0, 0.05, 0.15, 0.30])
     def test_accepts_range_of_growth_rates(self, growth_rate):
         with patch("cardinal.api.main.fetch_financial_snapshot", return_value=FAKE_SNAPSHOT), \
-             patch("cardinal.api.main.fetch_company_profile", return_value=FAKE_PROFILE):
+             patch("cardinal.api.main.fetch_company_profile", return_value=FAKE_PROFILE), \
+             patch("cardinal.api.main.get_usd_rate", return_value=1.0):
             response = client.get("/ticker/AAPL/dcf", params={"growth_rate": growth_rate})
         assert response.status_code == 200
 

@@ -193,3 +193,79 @@ def benchmark_for_ticker(symbol: str) -> str:
     if any(upper.endswith(ext) for ext in [".DE", ".L", ".PA", ".AS", ".MI", ".MC", ".BR", ".SW"]):
         return "^STOXX50E"
     return "^GSPC"
+
+def compute_signal_bias(
+    momentum_20d: float | None,
+    momentum_60d: float | None,
+    momentum_252d: float | None,
+    sharpe_252d: float | None,
+    rsi: float | None,
+    bb_pct_b: float | None,
+) -> str:
+    """
+    Compute an overall directional Signal Bias using a weighted multi-factor
+    scoring system. Using a score threshold (not a single hard cutoff) provides
+    natural hysteresis — the label only flips when multiple signals align,
+    preventing oscillation from noise in a single metric near its boundary.
+
+    Score weights:
+      252d momentum: ±2  (strongest trend signal, longest lookback)
+      60d momentum:  ±1  (medium-term confirmation)
+      20d momentum:  ±1  (short-term, most noise — lowest weight)
+      Sharpe 252d:   ±1  (risk-adjusted quality gate)
+      RSI extreme:   ±1  (overbought/oversold, only at extremes)
+
+    Label thresholds (hysteresis via score, not single-metric cutoff):
+      score >= 3  → BULLISH
+      score <= -3 → BEARISH
+      else        → NEUTRAL
+    """
+    BULLISH_THRESHOLD = 3
+    BEARISH_THRESHOLD = -3
+
+    score = 0.0
+
+    # 252d momentum — weight 2 (longest lookback, most reliable)
+    if momentum_252d is not None:
+        if momentum_252d > 0.5:
+            score += 2
+        elif momentum_252d > 0.3:
+            score += 1
+        elif momentum_252d < -0.5:
+            score -= 2
+        elif momentum_252d < -0.3:
+            score -= 1
+
+    # 60d momentum — weight 1
+    if momentum_60d is not None:
+        if momentum_60d > 0.3:
+            score += 1
+        elif momentum_60d < -0.3:
+            score -= 1
+
+    # 20d momentum — weight 1 (noisiest; only counts at extremes)
+    if momentum_20d is not None:
+        if momentum_20d > 0.5:
+            score += 1
+        elif momentum_20d < -0.5:
+            score -= 1
+
+    # 252d Sharpe — quality gate: strong positive return adds, negative removes
+    if sharpe_252d is not None:
+        if sharpe_252d > 1.5:
+            score += 1
+        elif sharpe_252d < 0:
+            score -= 1
+
+    # RSI — only at genuine extremes (<25 or >75), avoids penalising mid-range
+    if rsi is not None:
+        if rsi < 25:
+            score += 1   # oversold — potential reversal
+        elif rsi > 75:
+            score -= 1   # overbought — momentum risk
+
+    if score >= BULLISH_THRESHOLD:
+        return "BULLISH"
+    elif score <= BEARISH_THRESHOLD:
+        return "BEARISH"
+    return "NEUTRAL"

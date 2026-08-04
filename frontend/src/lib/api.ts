@@ -48,17 +48,23 @@ export interface DCFAssumptions {
 export interface DCFResponse {
   ticker: string;
   company_name: string;
-  wacc: number;
-  cost_of_equity: number;
+  exchange: string | null;
+  currency: string;
+  usd_conversion_rate: number | null;
+  current_price_usd: number | null;
+  wacc: number | null;
+  cost_of_equity: number | null;
   projected_fcf: number[];
   pv_projected_fcf: number[];
-  pv_terminal_value: number;
-  terminal_value_pct_of_ev: number;
-  enterprise_value: number;
-  equity_value: number;
-  intrinsic_value_per_share: number;
+  pv_terminal_value: number | null;
+  terminal_value_pct_of_ev: number | null;
+  enterprise_value: number | null;
+  equity_value: number | null;
+  intrinsic_value_per_share: number | null;
   current_price: number;
-  premium_discount_pct: number;
+  premium_discount_pct: number | null;
+  is_partial: boolean;
+  partial_reason: string | null;
 }
 
 export function fetchDCF(ticker: string, assumptions: Partial<DCFAssumptions> = {}) {
@@ -183,6 +189,12 @@ export interface AgentResponse {
   ticker: string;
   memo: string;
   news_used: boolean;
+  response_time_ms: number;
+  params_hash: string;
+  thought_process: string | null;
+  approval_count: number;
+  rejection_count: number;
+  is_verified: boolean;
 }
 
 export interface MessiResponse {
@@ -193,6 +205,11 @@ export interface MessiResponse {
   synthesis_memo: string;
   news_used: boolean;
   cached_agents: string[];
+  response_time_ms: number;
+  synthesis_params_hash: string;
+  synthesis_approval_count: number;
+  synthesis_rejection_count: number;
+  synthesis_is_verified: boolean;
 }
 
 export interface MessiParams {
@@ -225,4 +242,93 @@ export function fetchIniesta(ticker: string) {
 
 export function fetchBusquets(ticker: string, strategy: BacktestStrategy = "momentum", params: Record<string, number> = {}) {
   return apiPost<AgentResponse>("/agent/busquets", { ticker, strategy, ...params });
+}
+
+// ── Feedback ──────────────────────────────────────────────────────────────────
+
+export interface FeedbackResponse {
+  approval_count: number;
+  rejection_count: number;
+  is_verified: boolean;
+  threshold: number;
+  message: string;
+}
+
+export function submitFeedback(
+  ticker: string,
+  agent: string,
+  paramsHash: string,
+  vote: "positive" | "negative",
+  comment?: string
+) {
+  return apiPost<FeedbackResponse>("/feedback", { ticker, agent, params_hash: paramsHash, vote, comment: comment ?? null });
+}
+// ── Market overview (homepage + ticker tape) ────────────────────────────────
+
+export interface MarketSparklinePoint {
+  date: string;
+  value: number;
+}
+
+export interface IndexQuote {
+  symbol: string;
+  name: string;
+  value: number;
+  change: number;
+  change_pct: number;
+  sparkline: MarketSparklinePoint[];
+}
+
+export interface MarketIndicesResponse {
+  indices: IndexQuote[];
+}
+
+export function fetchMarketIndices() {
+  return apiGet<MarketIndicesResponse>("/market/indices");
+}
+
+export interface MoverQuote {
+  ticker: string;
+  name: string;
+  price: number;
+  change_pct: number;
+  sparkline: MarketSparklinePoint[];
+}
+
+export interface MarketMoversResponse {
+  gainers: MoverQuote[];
+  losers: MoverQuote[];
+}
+
+export function fetchMarketMovers(limit: number = 5) {
+  return apiGet<MarketMoversResponse>("/market/movers", { limit });
+}
+
+export interface SectorPerformance {
+  name: string;
+  etf_proxy: string;
+  change_pct: number;
+}
+
+export interface SectorHeatmapResponse {
+  sectors: SectorPerformance[];
+}
+
+export function fetchSectorHeatmap() {
+  return apiGet<SectorHeatmapResponse>("/market/sectors");
+}
+
+export interface TapeQuote {
+  ticker: string;
+  name: string;
+  price: number;
+  change_pct: number;
+}
+
+export interface TickerTapeResponse {
+  quotes: TapeQuote[];
+}
+
+export function fetchTickerTape() {
+  return apiGet<TickerTapeResponse>("/market/ticker-tape");
 }

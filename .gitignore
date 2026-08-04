@@ -25,3 +25,5 @@ htmlcov/
 
 node_modules/
 frontend/dist/
+cardinal_gt.db
+*.db

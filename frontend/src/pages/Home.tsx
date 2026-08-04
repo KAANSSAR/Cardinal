@@ -1,53 +1,70 @@
 import TickerSearch from "../components/TickerSearch";
+import MarketIndices from "../components/MarketIndices";
+import GainersLosers from "../components/GainersLosers";
+import SectorHeatmap from "../components/SectorHeatmap";
 
+// Lens identity colors are fixed regardless of the Amber/Cyan/Green terminal
+// theme — these code "which lens" not "which terminal skin", so they stay
+// constant even as the surrounding chrome re-themes.
 const LENSES = [
-  { label: "Fundamental", desc: "Live DCF valuation with editable WACC, growth, and terminal value assumptions.", color: "border-teal text-teal" },
-  { label: "Quant", desc: "Momentum, rolling Sharpe, beta, and volatility signals across timeframes.", color: "border-blue text-blue" },
-  { label: "Backtest", desc: "Run momentum and mean-reversion strategies against historical price data.", color: "border-purple text-purple" },
-  { label: "AI Agents", desc: "Xavi, Iniesta, Busquets, and Messi interpret each lens — read-only, grounded.", color: "border-amber text-amber-dark" },
+  { label: "Fundamental", dot: "#0d9488" },
+  { label: "Quant", dot: "#3b82f6" },
+  { label: "Backtest", dot: "#a78bfa" },
+  { label: "AI Agents", dot: "#f59e0b" },
 ];
 
 const QUICK_TICKERS = ["AAPL", "MSFT", "RELIANCE.NS", "SAP.DE"];
 
 export default function Home() {
   return (
-    <div className="mx-auto max-w-3xl px-6 py-20">
-      <p className="font-mono text-xs tracking-widest text-teal uppercase mb-3">
-        Multi-lens equity analysis
-      </p>
-      <h1 className="font-display text-5xl font-semibold text-dark-text leading-tight mb-4">
-        One ticker. Four lenses.
-      </h1>
-      <p className="text-slate text-lg mb-10 max-w-xl">
-        Fundamental valuation, quant signals, algo backtesting, and AI interpretation —
-        for any equity across US, Indian, and European markets.
-      </p>
+    <div className="mx-auto max-w-6xl px-6 py-16 space-y-16">
+      {/* Hero */}
+      <div className="text-center max-w-2xl mx-auto">
+        <p className="font-mono text-xs tracking-widest text-term-accent uppercase mb-3">
+          Multi-lens equity analysis
+        </p>
+        <h1 className="font-display text-5xl font-semibold text-term-text leading-tight mb-4">
+          One ticker. Four lenses.
+        </h1>
+        <p className="text-term-text-dim text-lg mb-8">
+          Fundamental valuation, quant signals, algo backtesting, and AI interpretation —
+          for any equity across US, Indian, and European markets.
+        </p>
 
-      <TickerSearch size="large" />
+        <TickerSearch size="large" />
 
-      <div className="flex flex-wrap gap-2 mt-3">
-        <span className="text-xs text-slate-light">Try:</span>
-        {QUICK_TICKERS.map((ticker) => (
-          <a
-            key={ticker}
-            href={`/ticker/${ticker}`}
-            className="text-xs font-mono text-teal hover:underline"
-          >
-            {ticker}
-          </a>
-        ))}
+        <div className="flex flex-wrap justify-center gap-2 mt-3">
+          <span className="text-xs font-mono text-term-text-faint">Try:</span>
+          {QUICK_TICKERS.map((ticker) => (
+            <a
+              key={ticker}
+              href={`/ticker/${ticker}`}
+              className="text-xs font-mono text-term-accent hover:underline"
+            >
+              {ticker}
+            </a>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap justify-center gap-5 mt-10">
+          {LENSES.map((lens) => (
+            <div key={lens.label} className="flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: lens.dot }} />
+              <span className="font-mono text-xs text-term-text-dim uppercase tracking-wide">
+                {lens.label}
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-16">
-        {LENSES.map((lens) => (
-          <div
-            key={lens.label}
-            className={`border-l-2 ${lens.color} pl-4 py-1`}
-          >
-            <p className={`font-semibold text-sm ${lens.color}`}>{lens.label}</p>
-            <p className="text-sm text-slate-dark mt-1">{lens.desc}</p>
-          </div>
-        ))}
+      {/* Market indices */}
+      <MarketIndices />
+
+      {/* Gainers/Losers + Sector Heatmap */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
+        <GainersLosers />
+        <SectorHeatmap />
       </div>
     </div>
   );

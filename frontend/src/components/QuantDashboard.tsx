@@ -13,37 +13,40 @@ function fmtNum(v: number | null, dp = 2): string {
   return v == null ? "—" : v.toFixed(dp);
 }
 
-type Signal = "BULLISH" | "BEARISH" | "NEUTRAL" | "STRONG" | "WEAK" | "OVERSOLD" | "OVERBOUGHT" | "ELEVATED" | "HIGH BETA" | "LOW";
+type Signal = "BULLISH" | "BEARISH" | "NEUTRAL" | "STRONG" | "WEAK" | "OVERSOLD" | "OVERBOUGHT" | "HIGH BETA" | "LOW";
 
+// Semantic mapping per design tokens: accent2=positive, danger=negative,
+// accent=primary/warn (used for "notable but not necessarily bad" signals like high beta).
 function getSignal(metric: string, value: number | null): { signal: Signal; color: string } {
-  if (value == null) return { signal: "NEUTRAL", color: "text-slate" };
+  if (value == null) return { signal: "NEUTRAL", color: "text-term-text-dim" };
 
   switch (metric) {
     case "momentum":
-      if (value > 0.3) return { signal: "BULLISH", color: "text-green-600" };
-      if (value < -0.3) return { signal: "BEARISH", color: "text-red-500" };
-      return { signal: "NEUTRAL", color: "text-amber-500" };
+      if (value > 0.3) return { signal: "BULLISH", color: "text-term-accent-2" };
+      if (value < -0.3) return { signal: "BEARISH", color: "text-term-danger" };
+      return { signal: "NEUTRAL", color: "text-term-text-dim" };
     case "sharpe":
-      if (value > 1.0) return { signal: "STRONG", color: "text-green-600" };
-      if (value < 0) return { signal: "WEAK", color: "text-red-500" };
-      return { signal: "NEUTRAL", color: "text-amber-500" };
+      if (value > 1.0) return { signal: "STRONG", color: "text-term-accent-2" };
+      if (value < 0) return { signal: "WEAK", color: "text-term-danger" };
+      return { signal: "NEUTRAL", color: "text-term-text-dim" };
     case "rsi":
-      if (value < 30) return { signal: "OVERSOLD", color: "text-green-600" };
-      if (value > 70) return { signal: "OVERBOUGHT", color: "text-red-500" };
-      return { signal: "NEUTRAL", color: "text-slate-dark" };
+      if (value < 30) return { signal: "OVERSOLD", color: "text-term-accent-2" };
+      if (value > 70) return { signal: "OVERBOUGHT", color: "text-term-danger" };
+      return { signal: "NEUTRAL", color: "text-term-text-dim" };
     case "beta":
-      if (value > 1.5) return { signal: "HIGH BETA", color: "text-amber-500" };
-      if (value < 0.5) return { signal: "LOW", color: "text-blue-500" };
-      return { signal: "NEUTRAL", color: "text-slate-dark" };
+      if (value > 1.5) return { signal: "HIGH BETA", color: "text-term-accent" };
+      if (value < 0.5) return { signal: "LOW", color: "text-term-text-dim" };
+      return { signal: "NEUTRAL", color: "text-term-text-dim" };
     default:
-      return { signal: "NEUTRAL", color: "text-slate-dark" };
+      return { signal: "NEUTRAL", color: "text-term-text-dim" };
   }
 }
 
 function SignalBadge({ signal, color }: { signal: Signal; color: string }) {
-  const bg = color.replace("text-", "bg-").replace("-600", "-50").replace("-500", "-50");
+  const bgClass = color.replace("text-", "bg-") + "/10";
+  const borderClass = color.replace("text-", "border-") + "/30";
   return (
-    <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${color} ${bg} border border-current border-opacity-20`}>
+    <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-mono font-bold ${color} ${bgClass} border ${borderClass}`}>
       {signal}
     </span>
   );
@@ -57,10 +60,10 @@ function Row({ label, value, signal, signalColor, interpretation }: {
   interpretation: string;
 }) {
   return (
-    <tr className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
-      <td className="py-2.5 pr-3 text-sm text-slate-dark">{label}</td>
-      <td className="py-2.5 px-3 font-mono text-sm font-semibold text-dark-text">{value}</td>
-      <td className="py-2.5 px-3 text-xs text-slate hidden sm:table-cell">{interpretation}</td>
+    <tr className="border-b border-term-border-faint hover:bg-term-panel-alt transition-colors">
+      <td className="py-2.5 pr-3 text-sm text-term-text-dim">{label}</td>
+      <td className="py-2.5 px-3 font-mono text-sm font-semibold text-term-text">{value}</td>
+      <td className="py-2.5 px-3 text-xs text-term-text-faint hidden sm:table-cell">{interpretation}</td>
       <td className="py-2.5 pl-3 text-right">
         <SignalBadge signal={signal} color={signalColor} />
       </td>
@@ -80,19 +83,19 @@ export default function QuantDashboard({ data }: Props) {
   return (
     <div className="space-y-6">
       {/* Signal table */}
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="rounded-lg border border-term-border bg-term-panel p-5">
         <div className="flex items-center justify-between mb-4">
-          <p className="font-mono text-[11px] text-slate-light uppercase tracking-wide">
+          <p className="font-mono text-[11px] text-term-text-faint uppercase tracking-widest">
             Signal dashboard
           </p>
-          <span className="text-[11px] text-slate-light">
-            Benchmark: <span className="font-mono text-slate-dark">{data.benchmark}</span>
+          <span className="text-[11px] font-mono text-term-text-faint">
+            Benchmark: <span className="text-term-text-dim">{data.benchmark}</span>
           </span>
         </div>
 
         <table className="w-full">
           <thead>
-            <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-dark">
+            <tr className="border-b border-term-border-faint text-[11px] font-mono uppercase tracking-wide text-term-text-faint">
               <th className="text-left py-2 pr-3 font-medium">Metric</th>
               <th className="text-left py-2 px-3 font-medium">Value</th>
               <th className="text-left py-2 px-3 font-medium hidden sm:table-cell">Interpretation</th>
@@ -153,10 +156,10 @@ export default function QuantDashboard({ data }: Props) {
                 : "NEUTRAL"
               }
               signalColor={
-                data.bb_pct_b == null ? "text-slate"
-                : data.bb_pct_b < 0.2 ? "text-green-600"
-                : data.bb_pct_b > 0.8 ? "text-red-500"
-                : "text-slate-dark"
+                data.bb_pct_b == null ? "text-term-text-dim"
+                : data.bb_pct_b < 0.2 ? "text-term-accent-2"
+                : data.bb_pct_b > 0.8 ? "text-term-danger"
+                : "text-term-text-dim"
               }
               interpretation={
                 data.bb_pct_b == null ? "—"
@@ -170,35 +173,35 @@ export default function QuantDashboard({ data }: Props) {
       </div>
 
       {/* Volatility surface */}
-      <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <p className="font-mono text-[11px] text-slate-light uppercase tracking-wide mb-4">
+      <div className="rounded-lg border border-term-border bg-term-panel p-5">
+        <p className="font-mono text-[11px] text-term-text-faint uppercase tracking-widest mb-4">
           Volatility surface — realised annualised vol
         </p>
         <div className="flex gap-3">
           {vols.map(({ label, value }) => {
             const isElevated = value != null && annualVol > 0 && value > annualVol * 1.15;
             return (
-              <div key={label} className={`flex-1 rounded-lg p-3 text-center border ${isElevated ? "border-amber/40 bg-amber/5" : "border-slate-100 bg-slate-50"}`}>
-                <p className="text-[11px] text-slate-light mb-1">{label}</p>
-                <p className={`font-mono text-lg font-semibold ${isElevated ? "text-amber-dark" : "text-dark-text"}`}>
+              <div key={label} className={`flex-1 rounded-lg p-3 text-center border ${isElevated ? "border-term-accent/40 bg-term-accent/5" : "border-term-border-faint bg-term-panel-alt"}`}>
+                <p className="text-[11px] font-mono text-term-text-faint mb-1">{label}</p>
+                <p className={`font-mono text-lg font-semibold ${isElevated ? "text-term-accent" : "text-term-text"}`}>
                   {fmtPct(value)}
                 </p>
-                {isElevated && <p className="text-[10px] text-amber-dark mt-0.5">elevated</p>}
+                {isElevated && <p className="text-[10px] font-mono text-term-accent mt-0.5 uppercase">elevated</p>}
               </div>
             );
           })}
         </div>
 
         {data.bb_upper != null && (
-          <div className="mt-4 pt-4 border-t border-slate-100 grid grid-cols-3 gap-3">
+          <div className="mt-4 pt-4 border-t border-term-border-faint grid grid-cols-3 gap-3">
             {[
               { label: "Upper band (2σ)", val: data.bb_upper },
               { label: "Middle (20d SMA)", val: data.bb_middle },
               { label: "Lower band (2σ)", val: data.bb_lower },
             ].map(({ label, val }) => (
               <div key={label}>
-                <p className="text-[11px] text-slate-light">{label}</p>
-                <p className="font-mono text-sm font-medium text-dark-text">${val?.toFixed(2)}</p>
+                <p className="text-[11px] font-mono text-term-text-faint uppercase tracking-wide">{label}</p>
+                <p className="font-mono text-sm font-medium text-term-text">${val?.toFixed(2)}</p>
               </div>
             ))}
           </div>

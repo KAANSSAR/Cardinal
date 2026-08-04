@@ -5,9 +5,10 @@ import { useDebounce } from "../lib/useDebounce";
 
 interface Props {
   size?: "large" | "default";
+  hideButton?: boolean;
 }
 
-export default function TickerSearch({ size = "default" }: Props) {
+export default function TickerSearch({ size = "default", hideButton = false }: Props) {
   const [value, setValue] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [open, setOpen] = useState(false);
@@ -17,7 +18,6 @@ export default function TickerSearch({ size = "default" }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const debouncedValue = useDebounce(value, 300);
 
-  // Fetch suggestions when debounced value changes
   useEffect(() => {
     if (debouncedValue.trim().length < 1) {
       setResults([]);
@@ -38,7 +38,6 @@ export default function TickerSearch({ size = "default" }: Props) {
       .finally(() => setLoading(false));
   }, [debouncedValue]);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
@@ -60,14 +59,9 @@ export default function TickerSearch({ size = "default" }: Props) {
     const ticker = value.trim().toUpperCase();
     if (!ticker) return;
     setOpen(false);
-    // If user typed a company name and we have a result, use that symbol
-    if (results.length > 0 && activeIndex >= 0) {
+    if (activeIndex >= 0 && results[activeIndex]) {
       navigate(`/ticker/${results[activeIndex].symbol}`);
-    } else if (results.length > 0 && !ticker.includes(" ")) {
-      // Direct ticker — navigate as-is
-      navigate(`/ticker/${ticker}`);
-    } else if (results.length > 0) {
-      // They typed a name, use first result
+    } else if (results.length > 0 && ticker.includes(" ")) {
       navigate(`/ticker/${results[0].symbol}`);
     } else {
       navigate(`/ticker/${ticker}`);
@@ -76,18 +70,10 @@ export default function TickerSearch({ size = "default" }: Props) {
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (!open) return;
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setActiveIndex((i) => Math.min(i + 1, results.length - 1));
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setActiveIndex((i) => Math.max(i - 1, -1));
-    } else if (e.key === "Enter" && activeIndex >= 0) {
-      e.preventDefault();
-      handleSelect(results[activeIndex]);
-    } else if (e.key === "Escape") {
-      setOpen(false);
-    }
+    if (e.key === "ArrowDown") { e.preventDefault(); setActiveIndex((i) => Math.min(i + 1, results.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActiveIndex((i) => Math.max(i - 1, -1)); }
+    else if (e.key === "Enter" && activeIndex >= 0) { e.preventDefault(); handleSelect(results[activeIndex]); }
+    else if (e.key === "Escape") { setOpen(false); }
   }
 
   const isLarge = size === "large";
@@ -96,6 +82,11 @@ export default function TickerSearch({ size = "default" }: Props) {
     <div ref={containerRef} className="relative w-full">
       <form onSubmit={handleSubmit} className="flex gap-2">
         <div className="relative flex-1">
+          {hideButton && (
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-term-text-faint text-sm pointer-events-none">
+              ›
+            </span>
+          )}
           <input
             type="text"
             value={value}
@@ -105,44 +96,52 @@ export default function TickerSearch({ size = "default" }: Props) {
             placeholder="AAPL, Apple, Reliance, SAP…"
             aria-label="Search by ticker or company name"
             autoComplete="off"
-            className={`w-full rounded-xl border border-slate-300 bg-white font-mono tracking-wide shadow-sm focus:border-teal focus:outline-none transition-colors ${
-              isLarge ? "px-5 py-4 text-lg" : "px-3 py-2 text-sm"
+            className={`w-full rounded-lg border border-term-border bg-term-panel text-term-text font-mono tracking-wide placeholder:text-term-text-faint focus:border-term-accent focus:outline-none transition-colors ${
+              isLarge ? "px-5 py-4 text-lg" : hideButton ? "pl-8 pr-3 py-2.5 text-sm" : "px-3 py-2 text-sm"
             }`}
           />
           {loading && (
             <div className="absolute right-3 top-1/2 -translate-y-1/2">
-              <div className="h-4 w-4 rounded-full border-2 border-teal border-t-transparent animate-spin" />
+              <div className="h-4 w-4 rounded-full border-2 border-term-accent border-t-transparent animate-spin" />
             </div>
           )}
         </div>
-        <button
-          type="submit"
-          className={`shrink-0 rounded-xl bg-navy font-medium text-white hover:bg-navy-2 transition-colors ${
-            isLarge ? "px-6 py-4 text-base" : "px-5 py-2 text-sm"
-          }`}
-        >
-          Analyze
-        </button>
+        {!hideButton && (
+          <button
+            type="submit"
+            className={`shrink-0 rounded-lg font-mono font-bold text-term-bg bg-term-accent hover:opacity-90 transition-opacity uppercase tracking-wide ${
+              isLarge ? "px-6 py-4 text-base" : "px-5 py-2 text-sm"
+            }`}
+          >
+            Analyze
+          </button>
+        )}
       </form>
 
       {/* Dropdown */}
       {open && results.length > 0 && (
-        <div className="absolute top-full left-0 right-0 mt-1.5 z-50 rounded-xl border border-slate-200 bg-white shadow-lg overflow-hidden">
+        <div className="absolute top-full left-0 right-0 mt-1.5 z-50 rounded-lg border border-term-border bg-term-panel shadow-lg overflow-hidden">
           {results.map((result, i) => (
             <button
               key={result.symbol}
               onMouseDown={() => handleSelect(result)}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors ${
-                i === activeIndex ? "bg-slate-50" : "hover:bg-slate-50"
+              className={`w-full flex items-start gap-3 px-4 py-2.5 text-left transition-colors ${
+                i === activeIndex ? "bg-term-panel-alt" : "hover:bg-term-panel-alt"
               }`}
             >
-              <span className="font-mono text-sm font-semibold text-dark-text w-20 shrink-0">
+              {/* Symbol — fixed width, always on first line */}
+              <span className="font-mono text-sm font-semibold text-term-text w-20 shrink-0 pt-0.5">
                 {result.symbol}
               </span>
-              <span className="text-sm text-slate truncate flex-1">{result.name}</span>
-              {result.exchange && (
-                <span className="text-[11px] text-slate-light shrink-0">{result.exchange}</span>
-              )}
+              {/* Name + exchange — wrap naturally, never truncate */}
+              <span className="flex-1 min-w-0">
+                <span className="text-sm text-term-text-dim block leading-snug break-words">
+                  {result.name}
+                </span>
+                {result.exchange && (
+                  <span className="text-[10px] font-mono text-term-text-faint">{result.exchange}</span>
+                )}
+              </span>
             </button>
           ))}
         </div>

@@ -61,11 +61,11 @@ class TestBuildQuantSnapshot:
         assert "BULLISH" in snap  # momentum_252d=2.28 > 0.3
 
     def test_elevated_vol_flagged(self):
-        # vol_10d=0.40 vs vol_252d=0.20 — > 15% elevated
+        # vol_10d=0.40 vs vol_252d=0.20 — near-term > long-run, so surface is INVERTED
         snap = build_quant_snapshot(
             **{**SAMPLE_SNAP_KWARGS, "vol_10d": 0.40, "vol_252d": 0.20}
         )
-        assert "YES" in snap
+        assert "INVERTED" in snap
 
     def test_handles_none_values(self):
         snap = build_quant_snapshot(

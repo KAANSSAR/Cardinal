@@ -43,6 +43,24 @@ def _safe_get(info: dict, *keys: str, default=None):
     return safe_get(info, *keys, default=default)
 
 
+def get_usd_rate(currency: str) -> float | None:
+    """
+    Return the conversion rate: 1 {currency} = X USD.
+    Uses yfinance FOREX pairs (e.g. INRUSD=X, GBPUSD=X).
+    Returns None if the rate cannot be fetched (UI will omit USD column).
+    """
+    if not currency or currency.upper() == "USD":
+        return 1.0
+    try:
+        t = yf.Ticker(f"{currency.upper()}USD=X")
+        hist = t.history(period="2d")
+        if not hist.empty:
+            return round(float(hist["Close"].iloc[-1]), 6)
+    except Exception:
+        pass
+    return None
+
+
 def fetch_company_profile(ticker: str) -> CompanyProfile:
     """Fetch lightweight company metadata for display purposes."""
     t = yf.Ticker(ticker)
